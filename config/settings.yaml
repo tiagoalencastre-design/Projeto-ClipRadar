@@ -34,6 +34,20 @@ content_score_weights:
   chat_reaction: 0.0
   comment_potential: 0.0
 
+  # FASE 5 — sinais novos. TODOS COMEÇAM EM 0.0 de propósito: eles são
+  # calculados e aparecem no relatório, mas não mudam nenhum score até
+  # você dar peso a eles. Suba um de cada vez (ex: hook: 0.5) e compare o
+  # resultado antes de subir o próximo.
+  hook: 0.0                  # força do começo do clipe
+  surprise: 0.0              # maior salto brusco de intensidade
+  visual_clarity: 0.0        # ritmo de cortes legível
+  ending_quality: 0.0        # o clipe termina em alta
+
+  # Declarados, sem dado real ainda — deixe em 0.0.
+  share_potential: 0.0
+  vertical_suitability: 0.0
+  viral_potential: 0.0
+
 
 # Geração de título por IA (opcional) — usado no thumbnail.
 #

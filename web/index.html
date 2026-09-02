@@ -633,6 +633,10 @@ const translations = {
     tag_clutch: "Clutch", tag_reaction: "Reação", tag_funny: "Engraçado", tag_strong_quote: "Fala forte",
     tag_gameplay: "Gameplay", tag_conversation: "Conversa", tag_generic: "Momento",
     why_label: "Por que esse momento:",
+    reason_hook: "começa forte", reason_emotion: "reação intensa", reason_intensity: "gameplay agitado",
+    reason_surprise: "virada brusca", reason_ending: "termina em alta", reason_narrative: "contexto claro na fala",
+    reason_clarity: "ritmo visual bom", reason_retention: "prende a atenção",
+    reason_fallback: "pontuação acima da média do vídeo", reason_join: " e ",
     no_good_moments: "Nenhum momento com qualidade suficiente foi encontrado nesse vídeo.",
     processing_failed: "Falha no processamento. Tente novamente.",
     connection_lost: "Perdi a conexão com o servidor durante o processamento.",
@@ -705,6 +709,10 @@ const translations = {
     tag_clutch: "Clutch", tag_reaction: "Reaction", tag_funny: "Funny", tag_strong_quote: "Strong quote",
     tag_gameplay: "Gameplay", tag_conversation: "Conversation", tag_generic: "Moment",
     why_label: "Why this moment:",
+    reason_hook: "strong opening", reason_emotion: "intense reaction", reason_intensity: "busy gameplay",
+    reason_surprise: "sudden turn", reason_ending: "ends on a high", reason_narrative: "clear spoken context",
+    reason_clarity: "good visual pacing", reason_retention: "holds attention",
+    reason_fallback: "scored above this video's average", reason_join: " and ",
     no_good_moments: "No moment with enough quality was found in this video.",
     processing_failed: "Processing failed. Please try again.",
     connection_lost: "Lost connection to the server during processing.",
@@ -777,6 +785,10 @@ const translations = {
     tag_clutch: "Clutch", tag_reaction: "Reacción", tag_funny: "Gracioso", tag_strong_quote: "Frase fuerte",
     tag_gameplay: "Gameplay", tag_conversation: "Conversación", tag_generic: "Momento",
     why_label: "Por qué este momento:",
+    reason_hook: "empieza fuerte", reason_emotion: "reacción intensa", reason_intensity: "gameplay agitado",
+    reason_surprise: "giro brusco", reason_ending: "termina en alto", reason_narrative: "contexto claro en el habla",
+    reason_clarity: "buen ritmo visual", reason_retention: "mantiene la atención",
+    reason_fallback: "puntuación por encima del promedio del video", reason_join: " y ",
     no_good_moments: "No se encontró ningún momento con calidad suficiente en este video.",
     processing_failed: "Falló el procesamiento. Intenta de nuevo.",
     connection_lost: "Se perdió la conexión con el servidor durante el procesamiento.",
@@ -809,6 +821,35 @@ function detectLang() {
 const LANG = detectLang();
 const T = translations[LANG];
 document.documentElement.lang = LANG === 'pt' ? 'pt-BR' : LANG;
+
+// Monta o "por que esse momento" a partir dos sinais do Content Score.
+// Não usa IA e não custa nada — os números já vêm calculados do backend.
+// Pega os dois sinais mais fortes acima de 65; se nenhum passar, usa o
+// texto genérico em vez de inventar uma justificativa.
+const REASON_SIGNALS = [
+  ['hook', 'reason_hook'], ['emotional_reaction', 'reason_emotion'],
+  ['gameplay_intensity', 'reason_intensity'], ['surprise', 'reason_surprise'],
+  ['ending_quality', 'reason_ending'], ['narrative_context', 'reason_narrative'],
+  ['visual_clarity', 'reason_clarity'], ['retention_potential', 'reason_retention'],
+];
+
+function buildReason(clip) {
+  // Se a IA gerou uma explicação editorial, ela é melhor que a nossa.
+  if (clip.edit_plan && clip.edit_plan.explanation) return clip.edit_plan.explanation;
+
+  const b = clip.breakdown;
+  if (!b) return null;
+
+  const strong = REASON_SIGNALS
+    .map(([key, tKey]) => ({ value: Number(b[key]) || 0, label: T[tKey] }))
+    .filter(s => s.value >= 65)
+    .sort((a, b2) => b2.value - a.value)
+    .slice(0, 2)
+    .map(s => s.label);
+
+  if (!strong.length) return T.reason_fallback;
+  return strong.join(T.reason_join) + '.';
+}
 
 const CLIP_TYPE_TAG_KEY = {
   clutch: 'tag_clutch', reaction: 'tag_reaction', funny: 'tag_funny', strong_quote: 'tag_strong_quote',
@@ -1221,9 +1262,10 @@ function selectClip(idx) {
   });
   els.clipPreviewVideo.src = clip.video;
 
-  if (clip.edit_plan && clip.edit_plan.explanation) {
+  const reason = buildReason(clip);
+  if (reason) {
     els.clipWhyBox.style.display = 'block';
-    els.clipWhyBox.innerHTML = `<strong>${T.why_label}</strong>${clip.edit_plan.explanation}`;
+    els.clipWhyBox.innerHTML = `<strong>${T.why_label}</strong>${reason}`;
   } else {
     els.clipWhyBox.style.display = 'none';
   }

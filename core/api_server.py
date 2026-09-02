@@ -44,6 +44,7 @@ from core.app_config import get_app_config
 from core.job_store import PersistentJobStore
 from core.dependencies import APP_BASE_URL, SESSION_COOKIE_NAME, get_current_user
 from core.routers import auth as auth_router
+from core.routers import system as system_router
 
 VODS_DIR = Path("data/vods")
 CLIPS_DIR = Path("data/clips")
@@ -72,6 +73,7 @@ app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 # FASE 6: rotas de /api/auth/* agora vivem em core/routers/auth.py.
 # As URLs continuam exatamente as mesmas — o front-end não muda.
 app.include_router(auth_router.router)
+app.include_router(system_router.router)
 
 # ---------- Limites de segurança ----------
 SUPPORTED_VIDEO_EXTENSIONS = (".mp4", ".mov", ".mkv", ".webm")
@@ -223,43 +225,6 @@ def _check_job_owner(store: dict, job_id: str, user_id: int) -> dict:
     return data
 
 
-@app.get("/api/system/config")
-def system_config() -> dict:
-    """
-    Confirma em que modo o servidor está rodando (development/mock/production)
-    e quais feature flags estão ligadas — sem segredo nenhum aqui, só booleans.
-    Público de propósito (útil pra confirmar o modo sem precisar do terminal).
-    """
-    return get_app_config().as_dict()
-
-
-# ============================================================
-# Páginas
-# ============================================================
-@app.get("/", response_class=HTMLResponse)
-def serve_landing() -> str:
-    path = FRONTEND_DIR / "landing.html"
-    if not path.exists():
-        raise HTTPException(500, "Arquivo web/landing.html não encontrado.")
-    return path.read_text(encoding="utf-8")
-
-
-@app.get("/login", response_class=HTMLResponse)
-def serve_login() -> str:
-    path = FRONTEND_DIR / "login.html"
-    if not path.exists():
-        raise HTTPException(500, "Arquivo web/login.html não encontrado.")
-    return path.read_text(encoding="utf-8")
-
-
-@app.get("/app", response_class=HTMLResponse)
-def serve_app() -> str:
-    path = FRONTEND_DIR / "index.html"
-    if not path.exists():
-        raise HTTPException(500, "Arquivo web/index.html não encontrado.")
-    return path.read_text(encoding="utf-8")
-
-
 # ============================================================
 # Vídeos (agora tudo protegido por login + isolado por usuário)
 # ============================================================
@@ -403,6 +368,7 @@ def _run_job(
                         "duration_seconds": c.get("duration_seconds"),
                         "video": _to_url(c["video_path"]), "thumbnail": _to_url(c["thumbnail_path"]),
                         "edit_plan": c.get("edit_plan"),
+                        "breakdown": c.get("breakdown"),
                     }
                     for c in clips
                 ],

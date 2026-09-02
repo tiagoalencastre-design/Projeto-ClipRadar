@@ -21,43 +21,43 @@ except Exception as e:  # fastapi ausente, ou erro ao subir o app
 
 @unittest.skipUnless(FASTAPI_OK, "fastapi não instalado neste ambiente")
 class TestAllUrlsStillRegistered(unittest.TestCase):
-    """Nenhuma URL pode ter sumido na mudança."""
+    """
+    Nenhuma URL pode ter sumido na divisão em routers.
+
+    Lemos o schema OpenAPI em vez de app.routes: versões novas do FastAPI
+    guardam as rotas incluídas de forma aninhada, e app.routes deixaria de
+    enxergá-las — o teste passaria sem testar nada.
+    """
 
     EXPECTED = {
-        # --- movidas pro router de auth na Fase 6 ---
-        ("POST", "/api/auth/signup"),
-        ("GET", "/api/auth/verify"),
-        ("POST", "/api/auth/resend-verification"),
-        ("POST", "/api/auth/login"),
-        ("POST", "/api/auth/logout"),
-        ("GET", "/api/auth/me"),
+        # --- router de auth (Fase 6) ---
+        "/api/auth/signup", "/api/auth/verify", "/api/auth/resend-verification",
+        "/api/auth/login", "/api/auth/logout", "/api/auth/me",
+        # --- router de system e páginas (Fase 6) ---
+        "/api/system/config", "/", "/login", "/app",
         # --- continuam no api_server.py ---
-        ("GET", "/api/system/config"),
-        ("GET", "/"),
-        ("GET", "/login"),
-        ("GET", "/app"),
-        ("GET", "/api/videos"),
+        "/api/videos", "/api/videos/upload", "/api/videos/from-youtube",
+        "/api/videos/download-status/{job_id}",
+        "/api/generate", "/api/status/{job_id}",
+        "/api/analyze", "/api/analyze-status/{job_id}", "/api/render-clip",
     }
 
-    def _registered(self) -> set:
-        found = set()
-        for route in api_server.app.routes:
-            for method in getattr(route, "methods", []) or []:
-                found.add((method, getattr(route, "path", "")))
-        return found
+    def _paths(self) -> set:
+        return set(api_server.app.openapi()["paths"].keys())
 
     def test_every_expected_url_exists(self):
-        registered = self._registered()
-        missing = self.EXPECTED - registered
+        missing = self.EXPECTED - self._paths()
         self.assertEqual(missing, set(), f"URLs que sumiram: {sorted(missing)}")
 
-    def test_no_duplicate_auth_routes(self):
-        """Se a rota antiga não foi removida, ela aparece duas vezes."""
-        paths = [
-            getattr(r, "path", "") for r in api_server.app.routes
-            if getattr(r, "path", "").startswith("/api/auth/")
-        ]
-        self.assertEqual(len(paths), len(set(paths)), f"rota duplicada: {paths}")
+    def test_no_unexpected_url_appeared(self):
+        """Rota duplicada ou criada sem querer também é problema."""
+        extra = self._paths() - self.EXPECTED
+        self.assertEqual(extra, set(), f"URLs inesperadas: {sorted(extra)}")
+
+    def test_auth_methods_preserved(self):
+        paths = api_server.app.openapi()["paths"]
+        self.assertIn("post", paths["/api/auth/login"])
+        self.assertIn("get", paths["/api/auth/me"])
 
 
 @unittest.skipUnless(FASTAPI_OK, "fastapi não instalado neste ambiente")
@@ -76,6 +76,12 @@ class TestSharedDependencies(unittest.TestCase):
         from core.dependencies import get_current_user
         from core.routers import auth as auth_router
         self.assertIs(auth_router.get_current_user, get_current_user)
+
+    def test_paths_module_is_single_source(self):
+        """api_server.py e os routers precisam apontar pras mesmas pastas."""
+        from core import paths
+        self.assertEqual(api_server.VODS_DIR, paths.VODS_DIR)
+        self.assertEqual(api_server.CLIPS_DIR, paths.CLIPS_DIR)
 
 
 class TestAuthRouterIsolated(unittest.TestCase):

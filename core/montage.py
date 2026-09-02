@@ -796,6 +796,9 @@ def export_separate_clips(
             "video_path": str(clip_path),
             "thumbnail_path": str(thumb_path),
             "edit_plan": moment.get("_edit_plan"),
+            # Sinais do Content Score — a interface usa pra explicar ao
+            # usuário POR QUE este momento foi escolhido, sem custo de IA.
+            "breakdown": moment.get("breakdown"),
         }
 
     max_workers = min(len(top_moments), os.cpu_count() or 4)
@@ -871,6 +874,7 @@ def get_candidates_for_review(analysis_path: str, max_candidates: int = 8) -> li
             "transcript_excerpt": m.get("transcript_excerpt", ""),
             "phrases": group_words_into_phrases(m.get("transcript_words", [])),
             "edit_plan": m.get("edit_plan"),  # só existe se já foi renderizado/persistido antes
+            "breakdown": m.get("breakdown"),
         })
     return candidates
 
