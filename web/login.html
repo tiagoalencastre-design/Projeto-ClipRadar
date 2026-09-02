@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClipRadar — Entrar</title>
+<link rel="icon" type="image/png" href="/assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-void: #05070d;
+    --bg-panel: #0d1119;
+    --bg-panel-2: #11151f;
+    --border-subtle: rgba(255,255,255,0.08);
+    --border-strong: rgba(255,255,255,0.16);
+    --accent-lime: #7CFC3C;
+    --accent-lime-soft: rgba(124,252,60,0.12);
+    --accent-secondary: #5B7CFA;
+    --text-primary: #F1F3F8;
+    --text-muted: #8B93A7;
+    --text-faint: #5B6273;
+    --radius-md: 12px;
+    --radius-lg: 18px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg-void); color: var(--text-primary);
+    font-family: 'Inter', sans-serif; display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  h1 { font-family: 'Space Grotesk', sans-serif; margin: 0 0 6px; font-size: 1.4rem; }
+  .brand { display: flex; align-items: center; gap: 9px; font-weight: 700; justify-content: center; margin-bottom: 24px; }
+  .brand img { width: 26px; height: 26px; border-radius: 6px; }
+  .card { background: var(--bg-panel); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: 32px; width: 100%; max-width: 380px; }
+  .subtitle { color: var(--text-muted); font-size: 0.88rem; margin-bottom: 22px; }
+  .field-label { font-size: 0.78rem; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; display: block; }
+  input {
+    width: 100%; background: var(--bg-panel-2); color: var(--text-primary);
+    border: 1px solid var(--border-subtle); border-radius: 8px; padding: 11px 12px;
+    font-family: 'Inter', sans-serif; font-size: 0.92rem; margin-bottom: 16px;
+  }
+  input:focus { outline: none; border-color: var(--accent-secondary); }
+  .btn-primary {
+    width: 100%; height: 46px; border-radius: 10px; border: none; cursor: pointer;
+    background: var(--accent-lime); color: #06210a; font-weight: 700; font-size: 0.95rem;
+  }
+  .btn-primary:hover { filter: brightness(1.08); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .switch-mode { text-align: center; font-size: 0.85rem; color: var(--text-muted); margin-top: 18px; }
+  .switch-mode a { color: var(--accent-lime); text-decoration: none; cursor: pointer; }
+  .switch-mode a:hover { text-decoration: underline; }
+  .msg-box { padding: 10px 12px; border-radius: 8px; font-size: 0.84rem; margin-bottom: 16px; display: none; }
+  .msg-box.error { display: block; background: rgba(241,101,101,0.1); border: 1px solid rgba(241,101,101,0.3); color: #ff9d9d; }
+  .msg-box.success { display: block; background: rgba(124,252,60,0.1); border: 1px solid rgba(124,252,60,0.3); color: var(--accent-lime); }
+  .resend-link { text-align: center; font-size: 0.8rem; margin-top: 10px; }
+  .resend-link a { color: var(--text-muted); cursor: pointer; }
+  form.hidden { display: none; }
+</style>
+</head>
+<body>
+  <div style="width:100%; max-width:380px;">
+    <div class="brand"><img src="/assets/logo.png" alt="ClipRadar"> ClipRadar</div>
+
+    <div class="card">
+      <div class="msg-box" id="msgBox"></div>
+
+      <form id="loginForm">
+        <h1>Entrar</h1>
+        <p class="subtitle">Acesse sua conta pra criar clips.</p>
+        <span class="field-label">E-mail</span>
+        <input type="email" id="loginEmail" required autocomplete="email">
+        <span class="field-label">Senha</span>
+        <input type="password" id="loginPassword" required autocomplete="current-password">
+        <button class="btn-primary" type="submit" id="loginBtn">Entrar</button>
+        <div class="resend-link"><a id="showResend">Reenviar e-mail de confirmação</a></div>
+        <div class="switch-mode">Ainda não tem conta? <a id="showSignup">Criar conta</a></div>
+      </form>
+
+      <form id="signupForm" class="hidden">
+        <h1>Criar conta</h1>
+        <p class="subtitle">Beta fechado — você vai receber um e-mail pra confirmar.</p>
+        <span class="field-label">Nome de usuário</span>
+        <input type="text" id="signupUsername" required>
+        <span class="field-label">E-mail</span>
+        <input type="email" id="signupEmail" required autocomplete="email">
+        <span class="field-label">Senha (mín. 8 caracteres)</span>
+        <input type="password" id="signupPassword" required minlength="8" autocomplete="new-password">
+        <button class="btn-primary" type="submit" id="signupBtn">Criar conta</button>
+        <div class="switch-mode">Já tem conta? <a id="showLogin">Entrar</a></div>
+      </form>
+
+      <form id="resendForm" class="hidden">
+        <h1>Reenviar confirmação</h1>
+        <p class="subtitle">Perdeu o e-mail? Manda um novo link.</p>
+        <span class="field-label">E-mail</span>
+        <input type="email" id="resendEmail" required autocomplete="email">
+        <button class="btn-primary" type="submit" id="resendBtn">Reenviar</button>
+        <div class="switch-mode"><a id="backToLoginFromResend">Voltar pro login</a></div>
+      </form>
+    </div>
+  </div>
+
+<script>
+  const msgBox = document.getElementById('msgBox');
+  const loginForm = document.getElementById('loginForm');
+  const signupForm = document.getElementById('signupForm');
+  const resendForm = document.getElementById('resendForm');
+
+  function showMsg(text, type) {
+    msgBox.textContent = text;
+    msgBox.className = `msg-box ${type}`;
+  }
+  function clearMsg() {
+    msgBox.textContent = '';
+    msgBox.className = 'msg-box';
+  }
+  function switchTo(form) {
+    [loginForm, signupForm, resendForm].forEach(f => f.classList.add('hidden'));
+    form.classList.remove('hidden');
+    clearMsg();
+  }
+
+  document.getElementById('showSignup').addEventListener('click', () => switchTo(signupForm));
+  document.getElementById('showLogin').addEventListener('click', () => switchTo(loginForm));
+  document.getElementById('showResend').addEventListener('click', () => switchTo(resendForm));
+  document.getElementById('backToLoginFromResend').addEventListener('click', () => switchTo(loginForm));
+
+  // se voltou do link de confirmação de e-mail
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('verified') === '1') {
+    showMsg('E-mail confirmado! Já pode entrar.', 'success');
+  }
+
+  loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearMsg();
+    const btn = document.getElementById('loginBtn');
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: document.getElementById('loginEmail').value,
+          password: document.getElementById('loginPassword').value,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Erro ao entrar.');
+      window.location.href = '/app';
+    } catch (err) {
+      showMsg(err.message, 'error');
+      btn.disabled = false;
+    }
+  });
+
+  signupForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearMsg();
+    const btn = document.getElementById('signupBtn');
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/auth/signup', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: document.getElementById('signupUsername').value,
+          email: document.getElementById('signupEmail').value,
+          password: document.getElementById('signupPassword').value,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Erro ao criar conta.');
+      showMsg(data.message, 'success');
+      switchTo(loginForm);
+      showMsg(data.message, 'success');
+    } catch (err) {
+      showMsg(err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  resendForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearMsg();
+    const btn = document.getElementById('resendBtn');
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/auth/resend-verification', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: document.getElementById('resendEmail').value }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Erro ao reenviar.');
+      showMsg(data.message, 'success');
+    } catch (err) {
+      showMsg(err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

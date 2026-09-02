@@ -1,0 +1,22 @@
+# Core de processamento
+scenedetect[opencv]==0.6.4
+faster-whisper==1.0.3
+numpy==1.26.4
+librosa==0.10.2.post1
+ffmpeg-python==0.2.0
+pyyaml==6.0.2
+pydantic==2.9.2
+python-dotenv==1.0.1
+requests==2.32.3
+Pillow==10.4.0
+openai==1.51.0
+fastapi==0.115.0
+uvicorn==0.30.6
+python-multipart==0.0.12
+yt-dlp==2024.10.7
+
+# Interface local de revisão (Fase 1)
+streamlit==1.38.0
+
+# Utilidades
+tqdm==4.66.5

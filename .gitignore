@@ -1,0 +1,29 @@
+# Segredos — NUNCA versionar
+.env
+.env.*
+!.env.example
+
+# Banco de dados — contém e-mails e hashes de senha de usuários
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+
+# Ambiente virtual Python
+venv/
+__pycache__/
+*.pyc
+
+# Dados gerados localmente (vídeos, clipes, análises) — pesados demais pro Git
+data/vods/*
+data/clips/*
+data/cache/*
+!data/vods/.gitkeep
+!data/clips/.gitkeep
+!data/cache/.gitkeep
+
+# Configuração do editor (opcional manter, mas pode variar por máquina)
+.vscode/
+
+# Lixo de sessões antigas
+mnt/
