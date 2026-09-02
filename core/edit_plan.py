@@ -14,6 +14,9 @@ from __future__ import annotations
 
 import json
 
+from core.ai_providers import get_provider
+from core.ai_providers.registry import get_model_for_task
+
 VALID_CLIP_TYPES = {"clutch", "reaction", "funny", "strong_quote", "gameplay", "conversation", "generic"}
 VALID_SUBTITLE_STYLES = {"classic", "bold_yellow", "minimal_top", "boxed"}
 MAX_ZOOM_EVENTS = 4  # limite de segurança — evita um plano com zoom em excesso
@@ -40,7 +43,11 @@ irrelevantes pro entendimento do clip.
 """
 
 
-def generate_edit_plan(moment: dict, api_key: str, model: str = "gpt-4o-mini") -> dict | None:
+def generate_edit_plan(
+    moment: dict,
+    api_key: str | None = None,
+    model: str | None = None,
+) -> dict | None:
     """
     moment: dict de um momento candidato (do analysis.json) — precisa ter
     start_seconds, end_seconds, context_start_seconds, transcript_excerpt e
@@ -48,12 +55,10 @@ def generate_edit_plan(moment: dict, api_key: str, model: str = "gpt-4o-mini") -
 
     Retorna o plano editorial (dict validado) ou None se indisponível/falhar.
     """
-    if not api_key:
-        return None
-
-    try:
-        from openai import OpenAI
-    except ImportError:
+    # FASE 4: quem decide se há IA disponível é a camada de providers.
+    # api_key/model continuam na assinatura só por compatibilidade.
+    provider = get_provider("edit_plan")
+    if provider is None:
         return None
 
     context_start = moment.get("context_start_seconds", moment.get("start_seconds", 0))
@@ -71,28 +76,22 @@ def generate_edit_plan(moment: dict, api_key: str, model: str = "gpt-4o-mini") -
         f"{_SCHEMA_INSTRUCTIONS}"
     )
 
+    raw = provider.complete_text(
+        system=(
+            "Você é um editor de vídeo especialista em clips de gaming pra redes sociais. "
+            "Analise o momento descrito e retorne um plano editorial estruturado, em JSON puro, "
+            "sem inventar informação que não foi dada."
+        ),
+        user=user_prompt,
+        model=model or get_model_for_task("edit_plan"),
+        max_tokens=450,
+        temperature=0.4,
+        json_mode=True,
+    )
+    if not raw:
+        return None
+
     try:
-        client = OpenAI(api_key=api_key)
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Você é um editor de vídeo especialista em clips de gaming pra redes sociais. "
-                        "Analise o momento descrito e retorne um plano editorial estruturado, em JSON puro, "
-                        "sem inventar informação que não foi dada."
-                    ),
-                },
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=450,
-            temperature=0.4,
-        )
-        raw = response.choices[0].message.content
-        if not raw:
-            return None
         plan = json.loads(raw)
         return _validate_plan(plan, context_start, end)
     except Exception:
