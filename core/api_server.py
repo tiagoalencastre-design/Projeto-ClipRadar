@@ -42,6 +42,8 @@ from core import auth
 from core import email_service
 from core.app_config import get_app_config
 from core.job_store import PersistentJobStore
+from core.dependencies import APP_BASE_URL, SESSION_COOKIE_NAME, get_current_user
+from core.routers import auth as auth_router
 
 VODS_DIR = Path("data/vods")
 CLIPS_DIR = Path("data/clips")
@@ -54,9 +56,6 @@ CLIPS_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 
-APP_BASE_URL = os.environ.get("APP_BASE_URL", "http://localhost:8000").rstrip("/")
-SESSION_COOKIE_NAME = "cliparadar_session"
-
 init_db()  # cria as tabelas de usuário/sessão se ainda não existirem
 
 # Fase 1: mostra claramente em que modo o servidor está subindo — sem isso,
@@ -65,12 +64,16 @@ _app_config = get_app_config()
 print(f"[ClipRadar] Modo atual: {_app_config.mode.upper()}")
 print(f"[ClipRadar] Feature flags: {_app_config.as_dict()['flags']}")
 
-app = FastAPI(title="ClipRadar API — beta fechado, uso restrito")
+app = FastAPI(title="ClipRadar API")
 app.mount("/files/clips", StaticFiles(directory=str(CLIPS_DIR)), name="clips")
 app.mount("/files/vods", StaticFiles(directory=str(VODS_DIR)), name="vods")
 app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
-# ---------- Configurações de segurança do beta fechado ----------
+# FASE 6: rotas de /api/auth/* agora vivem em core/routers/auth.py.
+# As URLs continuam exatamente as mesmas — o front-end não muda.
+app.include_router(auth_router.router)
+
+# ---------- Limites de segurança ----------
 SUPPORTED_VIDEO_EXTENSIONS = (".mp4", ".mov", ".mkv", ".webm")
 MAX_CONCURRENT_JOBS = 2
 MAX_UPLOAD_SIZE_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
@@ -89,21 +92,6 @@ _active_job_count = 0
 
 
 # ---------- Modelos de request ----------
-class SignupRequest(BaseModel):
-    email: str
-    username: str
-    password: str
-
-
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-
-
-class ResendVerificationRequest(BaseModel):
-    email: str
-
-
 class GenerateRequest(BaseModel):
     video_name: str
     mode: Literal["montage", "separate"] = "montage"
@@ -136,12 +124,9 @@ class RenderClipRequest(BaseModel):
     layout: Literal["gameplay_full", "gameplay_facecam", "facecam_focus"] = "gameplay_facecam"
 
 
-# ---------- Autenticação: dependency do FastAPI ----------
-def get_current_user(cliparadar_session: str | None = Cookie(default=None)) -> dict:
-    user = auth.get_user_from_session(cliparadar_session)
-    if not user:
-        raise HTTPException(401, "Sua sessão expirou ou você não está logado. Entre de novo.")
-    return user
+# ---------- Autenticação ----------
+# FASE 6: get_current_user, SESSION_COOKIE_NAME e APP_BASE_URL agora moram
+# em core/dependencies.py, compartilhados entre api_server.py e os routers.
 
 
 # ---------- Helpers de arquivo (agora por usuário, via storage_key) ----------
@@ -236,70 +221,6 @@ def _check_job_owner(store: dict, job_id: str, user_id: int) -> dict:
     if data.get("user_id") != user_id:
         raise HTTPException(404, "Job não encontrado")
     return data
-
-
-# ============================================================
-# Autenticação
-# ============================================================
-@app.post("/api/auth/signup")
-def signup(req: SignupRequest) -> dict:
-    try:
-        user = auth.create_user(req.email, req.username, req.password)
-    except auth.AuthError as e:
-        raise HTTPException(400, str(e))
-
-    verification_url = f"{APP_BASE_URL}/api/auth/verify?token={user['verification_token']}"
-    email_service.send_verification_email(user["email"], user["username"], verification_url)
-    return {"message": "Conta criada! Confira seu e-mail (inclusive spam) pra confirmar antes de entrar."}
-
-
-@app.get("/api/auth/verify")
-def verify(token: str):
-    ok = auth.verify_email_token(token)
-    if not ok:
-        raise HTTPException(400, "Link de confirmação inválido ou expirado.")
-    return RedirectResponse(url="/login?verified=1")
-
-
-@app.post("/api/auth/resend-verification")
-def resend_verification(req: ResendVerificationRequest) -> dict:
-    try:
-        token = auth.regenerate_verification_token(req.email)
-    except auth.AuthError as e:
-        raise HTTPException(400, str(e))
-    user = auth.get_user_by_email(req.email)
-    verification_url = f"{APP_BASE_URL}/api/auth/verify?token={token}"
-    email_service.send_verification_email(user["email"], user["username"], verification_url)
-    return {"message": "Novo link de confirmação enviado."}
-
-
-@app.post("/api/auth/login")
-def login(req: LoginRequest, response: Response) -> dict:
-    user = auth.get_user_by_email(req.email)
-    if not user or not auth.verify_password(req.password, user["password_hash"], user["password_salt"]):
-        raise HTTPException(401, "E-mail ou senha incorretos.")
-    if not user["email_verified"]:
-        raise HTTPException(403, "Confirme seu e-mail antes de entrar (veja sua caixa de entrada).")
-
-    token = auth.create_session(user["id"])
-    response.set_cookie(
-        SESSION_COOKIE_NAME, token, httponly=True, samesite="lax",
-        max_age=auth.SESSION_DURATION_DAYS * 24 * 3600,
-    )
-    return {"email": user["email"], "username": user["username"]}
-
-
-@app.post("/api/auth/logout")
-def logout(response: Response, cliparadar_session: str | None = Cookie(default=None)) -> dict:
-    if cliparadar_session:
-        auth.delete_session(cliparadar_session)
-    response.delete_cookie(SESSION_COOKIE_NAME)
-    return {"ok": True}
-
-
-@app.get("/api/auth/me")
-def me(user: dict = Depends(get_current_user)) -> dict:
-    return {"email": user["email"], "username": user["username"]}
 
 
 @app.get("/api/system/config")

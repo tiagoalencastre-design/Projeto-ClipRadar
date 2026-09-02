@@ -181,8 +181,8 @@
       <a href="#precos">Preços</a>
     </nav>
     <div class="header-actions">
-      <button class="btn btn-secondary" id="signInBtn">Sign in</button>
-      <a class="btn btn-primary" href="/login">Entrar no beta</a>
+      <a class="btn btn-secondary" href="/login">Entrar</a>
+      <a class="btn btn-primary" href="/login?signup=1">Criar conta</a>
       <button class="menu-toggle" id="menuToggle" aria-label="Abrir menu">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
       </button>
@@ -197,8 +197,8 @@
         <h1>Sua live já tem clips incríveis.<br>O <span class="hl">ClipRadar</span> encontra e edita.</h1>
         <p class="subtitle">Cole o link da sua live ou envie o VOD. A IA encontra os melhores momentos, corta, legenda e formata pronto pra TikTok, Reels e Shorts.</p>
         <div class="hero-actions">
-          <a class="btn btn-primary btn-lg" href="/login">Enviar vídeo</a>
-          <a class="btn btn-secondary btn-lg" href="/login">Colar link</a>
+          <a class="btn btn-primary btn-lg" href="/login?signup=1">Enviar vídeo</a>
+          <a class="btn btn-secondary btn-lg" href="/login?signup=1">Colar link</a>
         </div>
         <p class="proof-line"><strong>De horas de live</strong> para clips prontos pra postar — em minutos, não em dias.</p>
       </div>
@@ -286,31 +286,17 @@
   <section id="precos">
     <div class="wrap">
       <div class="final-cta">
-        <h2>Beta fechado, vagas limitadas</h2>
-        <p>O ClipRadar ainda está em beta — sem plano pago por enquanto. Entre agora e ajude a moldar o produto.</p>
-        <a class="btn btn-primary btn-lg" href="/login">Entrar no beta</a>
+        <h2>Comece agora, de graça</h2>
+        <p>Crie sua conta e transforme sua primeira live em clips prontos pra postar. Sem cartão de crédito.</p>
+        <a class="btn btn-primary btn-lg" href="/login?signup=1">Criar conta grátis</a>
       </div>
     </div>
   </section>
 </main>
 
 <footer>
-  <div class="wrap">© 2026 ClipRadar — beta fechado</div>
+  <div class="wrap">© 2026 ClipRadar</div>
 </footer>
 
-<div class="modal-backdrop" id="modalBackdrop">
-  <div class="modal-box">
-    <h3>Login em breve</h3>
-    <p>Contas de usuário ainda não existem nesse beta — por enquanto, é só entrar direto e usar.</p>
-    <button class="btn btn-primary" id="modalCloseBtn">Entendi</button>
-  </div>
-</div>
-
-<script>
-  const modalBackdrop = document.getElementById('modalBackdrop');
-  document.getElementById('signInBtn').addEventListener('click', () => modalBackdrop.classList.add('open'));
-  document.getElementById('modalCloseBtn').addEventListener('click', () => modalBackdrop.classList.remove('open'));
-  modalBackdrop.addEventListener('click', (e) => { if (e.target === modalBackdrop) modalBackdrop.classList.remove('open'); });
-</script>
 </body>
 </html>

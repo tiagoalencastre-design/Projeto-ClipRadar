@@ -78,7 +78,7 @@
 
       <form id="signupForm" class="hidden">
         <h1>Criar conta</h1>
-        <p class="subtitle">Beta fechado — você vai receber um e-mail pra confirmar.</p>
+        <p class="subtitle">Você vai receber um e-mail pra confirmar sua conta.</p>
         <span class="field-label">Nome de usuário</span>
         <input type="text" id="signupUsername" required>
         <span class="field-label">E-mail</span>
@@ -127,6 +127,10 @@
 
   // se voltou do link de confirmação de e-mail
   const params = new URLSearchParams(window.location.search);
+  // vindo de "Criar conta" na landing: já abre o formulário de cadastro
+  if (params.get('signup') === '1') {
+    switchTo(signupForm);
+  }
   if (params.get('verified') === '1') {
     showMsg('E-mail confirmado! Já pode entrar.', 'success');
   }
