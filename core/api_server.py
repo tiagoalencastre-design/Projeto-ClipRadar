@@ -45,6 +45,9 @@ from core.job_store import PersistentJobStore
 from core.dependencies import APP_BASE_URL, SESSION_COOKIE_NAME, get_current_user
 from core.routers import auth as auth_router
 from core.routers import system as system_router
+from core import persistence
+from core.observability import StageTimer, log_event
+from core.repositories import VideoRepository
 
 VODS_DIR = Path("data/vods")
 CLIPS_DIR = Path("data/clips")
@@ -58,6 +61,12 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 
 init_db()  # cria as tabelas de usuário/sessão se ainda não existirem
+
+# FASE 1 (confiabilidade): o estado de execução vive na memória, então jobs
+# que estavam rodando quando o processo morreu não voltam sozinhos. Em vez
+# de sumirem da tela, ficam marcados como 'interrupted' — o usuário vê o
+# que aconteceu.
+persistence.mark_orphan_jobs_as_interrupted()
 
 # Fase 1: mostra claramente em que modo o servidor está subindo — sem isso,
 # é fácil esquecer se IA está de fato bloqueada ou não nesta sessão.
@@ -230,12 +239,44 @@ def _check_job_owner(store: dict, job_id: str, user_id: int) -> dict:
 # ============================================================
 @app.get("/api/videos")
 def list_videos(user: dict = Depends(get_current_user)) -> dict:
+    """
+    FASE 1: a chave "videos" continua sendo a lista de nomes lida do disco —
+    é o que o front-end já consome, e não pode mudar de formato.
+
+    O disco continua sendo a fonte da verdade aqui de propósito: um arquivo
+    apagado à mão não deve continuar aparecendo só porque está no banco.
+    O que o banco acrescenta vai em "registered", com os metadados
+    (origem, data, duração) que o disco não sabe informar.
+    """
     _cleanup_old_jobs()
     user_dir = _user_vods_dir(user["storage_key"])
     videos = []
     for ext in SUPPORTED_VIDEO_EXTENSIONS:
         videos.extend(p.name for p in user_dir.glob(f"*{ext}"))
-    return {"videos": sorted(videos)}
+    videos = sorted(videos)
+
+    known = {
+        v.original_filename: {
+            "id": v.id, "source_type": v.source_type,
+            "created_at": v.created_at, "duration_seconds": v.duration_seconds,
+        }
+        for v in VideoRepository.list_for_user(user["id"])
+    }
+    return {
+        "videos": videos,
+        "registered": [{"filename": name, **known[name]} for name in videos if name in known],
+    }
+
+
+@app.get("/api/history")
+def user_history(user: dict = Depends(get_current_user)) -> dict:
+    """
+    Histórico persistido: vídeos, jobs e clipes. Sobrevive a restart.
+
+    Jobs marcados como "interrupted" são os que estavam rodando quando o
+    servidor caiu — aparecem com essa marca em vez de sumir.
+    """
+    return persistence.list_user_history(user["id"])
 
 
 @app.post("/api/videos/upload")
@@ -272,7 +313,8 @@ async def upload_video(file: UploadFile = File(...), user: dict = Depends(get_cu
         dest_path.unlink(missing_ok=True)
         raise HTTPException(500, "Falha ao salvar o arquivo enviado.")
 
-    return {"video_name": dest_path.name}
+    video_id = persistence.register_video(user, dest_path, source_type="upload")
+    return {"video_name": dest_path.name, "video_id": video_id}
 
 
 @app.post("/api/videos/from-youtube")
@@ -284,13 +326,14 @@ def start_youtube_download(req: YoutubeDownloadRequest, user: dict = Depends(get
     job_id = str(uuid.uuid4())
     download_jobs[job_id] = {"status": "running", "user_id": user["id"], "created_at": time.time()}
     thread = threading.Thread(
-        target=_run_youtube_download, args=(job_id, req.url, user["storage_key"]), daemon=True
+        target=_run_youtube_download, args=(job_id, req.url, user), daemon=True
     )
     thread.start()
     return {"job_id": job_id}
 
 
-def _run_youtube_download(job_id: str, url: str, storage_key: str) -> None:
+def _run_youtube_download(job_id: str, url: str, user: dict) -> None:
+    storage_key = user["storage_key"]
     try:
         import yt_dlp
     except ImportError:
@@ -313,7 +356,12 @@ def _run_youtube_download(job_id: str, url: str, storage_key: str) -> None:
             final_path = filename.with_suffix(".mp4")
             if not final_path.exists() and filename.exists():
                 final_path = filename
-        download_jobs[job_id].update({"status": "done", "video_name": final_path.name})
+        video_id = persistence.register_video(
+            user, final_path, source_type="youtube", source_url=url
+        )
+        download_jobs[job_id].update({
+            "status": "done", "video_name": final_path.name, "video_id": video_id,
+        })
     except Exception as e:
         print(f"[ClipRadar] Falha ao baixar vídeo do YouTube: {e}")
         download_jobs[job_id].update({"status": "error", "error": "Falha ao baixar o vídeo. Confira o link."})
@@ -328,9 +376,13 @@ def youtube_download_status(job_id: str, user: dict = Depends(get_current_user))
 # Análise / montagem / clipes separados (fluxo já existente)
 # ============================================================
 def _run_job(
-    job_id: str, video_path: Path, storage_key: str, mode: str, orientation: str,
+    job_id: str, video_path: Path, user: dict, mode: str, orientation: str,
     platform: str | None, burn_captions: bool, subtitle_style: str, preset: str,
 ) -> None:
+    storage_key = user["storage_key"]
+    video_id = persistence.find_video_id(user, video_path)
+    log_event(stage="job_iniciado", job_id=job_id, video_id=video_id,
+              user_id=user["id"], operation=mode)
     try:
         config = load_config()
         ai_title_config = config.get("ai_title", {})
@@ -373,6 +425,10 @@ def _run_job(
                     for c in clips
                 ],
             })
+            persistence.record_generated_clips(
+                user_id=user["id"], job_id=job_id, clips=clips,
+                video_id=video_id, mode="separate",
+            )
         else:
             final_video, thumbnail, edit_plan, duration = run_montage(
                 analysis_path=analysis_path, auto=True, platform=platform, orientation=orientation,
@@ -387,11 +443,22 @@ def _run_job(
                 "duration_seconds": round(duration, 1) if duration else None,
                 "preview_cards": preview_cards, "edit_plan": edit_plan,
             })
+            persistence.record_single_clip(
+                user_id=user["id"], storage_path=str(final_video),
+                video_id=video_id, job_id=job_id,
+                thumbnail_path=str(thumbnail) if thumbnail else None,
+                duration_seconds=round(duration, 1) if duration else None,
+                mode="montage",
+            )
     except (PipelineError, MontageError) as e:
         jobs[job_id].update({"status": "error", "error": str(e)})
+        log_event(stage="job_falhou", status="error", job_id=job_id,
+                  video_id=video_id, user_id=user["id"], error=str(e))
     except Exception:
         print(f"[ClipRadar] Erro inesperado no job {job_id}:\n{traceback.format_exc()}")
         jobs[job_id].update({"status": "error", "error": "Erro interno inesperado. Tente novamente."})
+        log_event(stage="job_falhou", status="error", job_id=job_id,
+                  video_id=video_id, user_id=user["id"], error="erro interno")
     finally:
         _release_job_slot()
 
@@ -405,10 +472,16 @@ def generate(req: GenerateRequest, user: dict = Depends(get_current_user)) -> di
         raise HTTPException(429, f"Já tem {MAX_CONCURRENT_JOBS} vídeo(s) sendo processado(s). Tente depois.")
 
     job_id = str(uuid.uuid4())
-    jobs[job_id] = {"status": "running", "step": "queued", "user_id": user["id"], "created_at": time.time()}
+    # video_id vai no dicionário: o PersistentJobStore o grava na tabela jobs,
+    # ligando o processamento ao vídeo de origem.
+    jobs[job_id] = {
+        "status": "running", "step": "queued", "user_id": user["id"],
+        "video_id": persistence.find_video_id(user, video_path),
+        "created_at": time.time(),
+    }
     thread = threading.Thread(
         target=_run_job,
-        args=(job_id, video_path, user["storage_key"], req.mode, req.orientation, req.platform,
+        args=(job_id, video_path, user, req.mode, req.orientation, req.platform,
               req.burn_captions, req.subtitle_style, req.preset),
         daemon=True,
     )
@@ -424,10 +497,15 @@ def status(job_id: str, user: dict = Depends(get_current_user)) -> dict:
 # ============================================================
 # Revisão manual (analisar sem renderizar + renderizar sob demanda)
 # ============================================================
-def _run_analyze_job(job_id: str, video_path: Path, storage_key: str) -> None:
+def _run_analyze_job(job_id: str, video_path: Path, user: dict) -> None:
+    storage_key = user["storage_key"]
+    video_id = persistence.find_video_id(user, video_path)
+
     def _set_step(step: str) -> None:
         if job_id in analyze_jobs:
             analyze_jobs[job_id]["step"] = step
+        log_event(stage=step, job_id=job_id, video_id=video_id,
+                  user_id=user["id"], operation="analyze")
 
     try:
         config = load_config()
@@ -440,9 +518,13 @@ def _run_analyze_job(job_id: str, video_path: Path, storage_key: str) -> None:
         })
     except PipelineError as e:
         analyze_jobs[job_id].update({"status": "error", "error": str(e)})
+        log_event(stage="analise_falhou", status="error", job_id=job_id,
+                  video_id=video_id, user_id=user["id"], error=str(e))
     except Exception:
         print(f"[ClipRadar] Erro inesperado na análise {job_id}:\n{traceback.format_exc()}")
         analyze_jobs[job_id].update({"status": "error", "error": "Erro interno inesperado durante a análise."})
+        log_event(stage="analise_falhou", status="error", job_id=job_id,
+                  video_id=video_id, user_id=user["id"], error="erro interno")
     finally:
         _release_job_slot()
 
@@ -456,9 +538,13 @@ def start_analyze(req: AnalyzeRequest, user: dict = Depends(get_current_user)) -
         raise HTTPException(429, f"Já tem {MAX_CONCURRENT_JOBS} vídeo(s) sendo processado(s). Tente depois.")
 
     job_id = str(uuid.uuid4())
-    analyze_jobs[job_id] = {"status": "running", "step": "queued", "user_id": user["id"], "created_at": time.time()}
+    analyze_jobs[job_id] = {
+        "status": "running", "step": "queued", "user_id": user["id"],
+        "video_id": persistence.find_video_id(user, video_path),
+        "created_at": time.time(),
+    }
     thread = threading.Thread(
-        target=_run_analyze_job, args=(job_id, video_path, user["storage_key"]), daemon=True
+        target=_run_analyze_job, args=(job_id, video_path, user), daemon=True
     )
     thread.start()
     return {"job_id": job_id}
@@ -487,6 +573,15 @@ def render_clip(req: RenderClipRequest, user: dict = Depends(get_current_user)) 
     except Exception:
         print(f"[ClipRadar] Erro inesperado ao renderizar clip:\n{traceback.format_exc()}")
         raise HTTPException(500, "Erro interno inesperado ao renderizar.")
+
+    persistence.record_single_clip(
+        user_id=user["id"],
+        storage_path=str(result["video_path"]),
+        clip_identifier=req.clip_id,
+        thumbnail_path=str(result["thumbnail_path"]) if result.get("thumbnail_path") else None,
+        duration_seconds=result.get("duration_seconds"),
+        mode="manual",
+    )
 
     return {
         "video": _to_url(result["video_path"]),
