@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 import uuid
 
 from core.detection import RawSignal
+from core.scoring_signals import SignalContext, compute_new_signals
 from core.transcription import TranscriptSegment, text_around
 
 
@@ -21,9 +22,24 @@ class ContentScoreBreakdown:
     chat_reaction: float = 0.0
     comment_potential: float = 0.0
 
+    # FASE 5 — sinais novos. Todos entram com peso 0.0 no settings.yaml, ou
+    # seja: aparecem no relatório, mas NÃO alteram nenhum score existente
+    # até você decidir dar peso a eles.
+    hook: float = 0.0
+    surprise: float = 0.0
+    visual_clarity: float = 0.0
+    ending_quality: float = 0.0
+    # Declarados, sem dado real ainda — ficam em 0.0 de propósito.
+    share_potential: float = 0.0
+    vertical_suitability: float = 0.0
+    viral_potential: float = 0.0
+
     def weighted_total(self, weights: dict) -> float:
-        total_weight = sum(weights.values()) or 1.0
-        score = sum(getattr(self, key) * weight for key, weight in weights.items())
+        """Peso desconhecido é ignorado em vez de quebrar — assim um typo no
+        settings.yaml não derruba a análise inteira."""
+        known = {k: w for k, w in weights.items() if hasattr(self, k)}
+        total_weight = sum(known.values()) or 1.0
+        score = sum(getattr(self, key) * weight for key, weight in known.items())
         return round((score / total_weight), 1)
 
 
@@ -91,7 +107,12 @@ def _hype_boost(transcript_excerpt: str) -> float:
     return min(keyword_boost + exclamation_boost + caps_boost, 30.0)
 
 
-def _score_cluster(cluster: list[RawSignal], transcript_excerpt: str) -> ContentScoreBreakdown:
+def _score_cluster(
+    cluster: list[RawSignal],
+    transcript_excerpt: str,
+    start_seconds: float | None = None,
+    end_seconds: float | None = None,
+) -> ContentScoreBreakdown:
     audio_signals = [s for s in cluster if s.source == "audio_peak"]
     scene_signals = [s for s in cluster if s.source == "scene_cut"]
 
@@ -111,12 +132,24 @@ def _score_cluster(cluster: list[RawSignal], transcript_excerpt: str) -> Content
 
     originality = 60.0
 
+    # FASE 5: sinais novos, calculados em core/scoring_signals.py (cada um
+    # isolado e testável). Só rodam se soubermos o intervalo do trecho.
+    new_signals = {}
+    if start_seconds is not None and end_seconds is not None:
+        new_signals = compute_new_signals(SignalContext(
+            cluster=cluster,
+            transcript_excerpt=transcript_excerpt,
+            start_seconds=start_seconds,
+            end_seconds=end_seconds,
+        ))
+
     return ContentScoreBreakdown(
         gameplay_intensity=round(gameplay_intensity, 1),
         emotional_reaction=emotional_reaction,
         narrative_context=round(narrative_context, 1),
         retention_potential=retention_potential,
         originality=originality,
+        **new_signals,
     )
 
 
@@ -178,7 +211,7 @@ def build_candidate_moments(
         segments = _segments_in_range(transcript, context_start, raw_end)
         words = _words_in_range(transcript, context_start, raw_end)
 
-        breakdown = _score_cluster(cluster, excerpt)
+        breakdown = _score_cluster(cluster, excerpt, raw_start, raw_end)
         total_score = breakdown.weighted_total(weights)
 
         moments.append(CandidateMoment(
