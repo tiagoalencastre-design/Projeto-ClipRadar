@@ -41,6 +41,7 @@ from core.database import init_db
 from core import auth
 from core import email_service
 from core.app_config import get_app_config
+from core.job_store import PersistentJobStore
 
 VODS_DIR = Path("data/vods")
 CLIPS_DIR = Path("data/clips")
@@ -75,9 +76,13 @@ MAX_CONCURRENT_JOBS = 2
 MAX_UPLOAD_SIZE_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
 JOB_EXPIRY_SECONDS = 24 * 60 * 60
 
-jobs: dict[str, dict] = {}
-download_jobs: dict[str, dict] = {}
-analyze_jobs: dict[str, dict] = {}
+# FASE 2b: continuam funcionando como dicionários comuns (todo o código
+# abaixo permanece igual), mas agora espelham status/step/error no banco
+# automaticamente. A memória segue sendo a fonte da verdade do que está
+# rodando AGORA; o banco é o histórico que sobrevive ao restart.
+jobs = PersistentJobStore("generate")
+download_jobs = PersistentJobStore("youtube_download")
+analyze_jobs = PersistentJobStore("analyze")
 
 _active_jobs_lock = threading.Lock()
 _active_job_count = 0
