@@ -63,8 +63,13 @@ selection:
   category_diversity_weight: 0.35   # evita 5 clipes do mesmo tipo
   temporal_diversity_weight: 0.2    # evita 5 clipes seguidos do mesmo trecho
 
+story:
+  # §9: limite da HISTÓRIA (o contexto), independente do limite do CLIPE.
+  # Uma história de 150s é legítima — ela vira candidatos menores depois.
+  story_max_duration_seconds: 180
+
 clip_duration:
-  # Limites, NÃO metas. A duração é consequência do conteúdo: uma história
+  # Limites do CLIPE. NÃO metas. A duração é consequência do conteúdo: uma história
   # pode legitimamente ter 18s, 42s ou 63s.
   absolute_min_seconds: 8
   ideal_min_seconds: 15

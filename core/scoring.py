@@ -230,10 +230,21 @@ def build_candidate_moments(
     config: dict,
 ) -> list[CandidateMoment]:
     """
-    REBUILD: sinal -> evento -> história -> bordas -> score -> dedup.
+    ⚠️ LEGADO — NÃO É MAIS USADO PELO PIPELINE DE PRODUÇÃO.
 
-    A assinatura e o formato de saída são os mesmos de antes: o pipeline, o
-    montage e o front-end não precisam mudar nada.
+    Desde a integração da V2, quem descobre e seleciona os clipes é
+    core/discovery.py -> discover_and_select(). Esta função continua aqui
+    apenas porque:
+
+      - gera 1 candidato por história (a limitação que a V2 veio resolver);
+      - serve de referência pra comparar resultados antigo x novo;
+      - alguma ferramenta externa pode ainda importá-la.
+
+    NÃO ligue isto de volta no pipeline: teria dois sistemas de seleção
+    concorrentes, que é exatamente o problema que a V2 eliminou.
+
+    Se for usar, saiba que o modelo principal do projeto hoje é
+    ClipCandidate (core/candidates.py), não CandidateMoment.
     """
     cand_cfg = config["candidate_moments"]
     weights = config["content_score_weights"]

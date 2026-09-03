@@ -28,7 +28,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.detection import collect_raw_signals
 from core.transcription import transcribe
-from core.scoring import build_candidate_moments
+from core.discovery import discover_and_select
+from core.v2_adapter import candidates_to_moments
 from core.timeutils import format_timestamp
 from core.app_config import get_app_config
 
@@ -127,20 +128,28 @@ def run_pipeline(video_path: str, config: dict, output_path: str, on_step: calla
 
         pbar.set_description(steps[2])
         _report("scoring")
-        moments = build_candidate_moments(signals, transcript, config)
+        # MOTOR V2: esta é a ÚNICA autoridade de seleção do pipeline.
+        # sinais -> eventos -> histórias -> vários candidatos por história
+        #        -> avaliação editorial heurística -> dedup -> diversidade
+        # Não há IA envolvida: o analisador é o HeuristicEditorialAnalyzer.
+        selected, report = discover_and_select(signals, transcript, config)
+        all_candidates = getattr(report, "all_candidates", []) or []
         pbar.update(1)
+
+    moments = candidates_to_moments(selected, transcript)
 
     result = {
         "video_path": video_path,
         "analyzed_at": datetime.now().isoformat(),
-        "total_candidates": len(moments),
-        "moments": [
-            {
-                **asdict(m),
-                "breakdown": asdict(m.breakdown),
-            }
-            for m in moments
-        ],
+        "engine": "v2",
+        "total_candidates": report.raw_candidates,
+        # "moments" traz os clipes JÁ SELECIONADOS pela V2. O montage.py
+        # renderiza esta lista sem refazer seleção editorial.
+        "moments": moments,
+        # Relatório de execução e candidatos descartados, pra diagnosticar
+        # "por que só saíram 3 clipes?" sem adivinhação.
+        "discovery_report": report.as_dict(),
+        "all_candidates": [c.as_dict() for c in all_candidates],
     }
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)

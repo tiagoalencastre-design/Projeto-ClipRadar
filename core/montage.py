@@ -37,7 +37,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.thumbnail import extract_thumbnail, derive_thumbnail_text, get_thumbnail_text
-from core.dedup import rank_with_diversity
 from core.subtitles import build_ass_karaoke, STYLE_PRESETS, DEFAULT_STYLE
 from core.face_crop import detect_face_offset_fraction, build_face_aware_crop_filter, detect_face_bbox_fraction
 from core.pipeline import load_config
@@ -161,12 +160,16 @@ def _selection_config() -> dict:
         cfg = load_config().get("clip_selection", {}) or {}
     except Exception:
         cfg = {}
+    # A seleção editorial mora em core/discovery.py (seção "selection" do
+    # settings.yaml). Aqui só resta o teto de quantidade da renderização.
+    selection = {}
+    try:
+        selection = load_config().get("selection", {}) or {}
+    except Exception:
+        pass
     return {
-        "max_moments": int(cfg.get("max_clips", 20)),
+        "max_moments": int(selection.get("max_final_clips", cfg.get("max_clips", 20))),
         "min_moments": int(cfg.get("min_clips", 1)),
-        "score_floor": float(cfg.get("score_floor", 35.0)),
-        "score_gap": float(cfg.get("score_gap", 35.0)),
-        "diversity_weight": float(cfg.get("diversity_weight", 0.35)),
     }
 
 
@@ -174,46 +177,52 @@ def select_moments_automatically(
     all_moments: list[dict],
     min_moments: int = 1,
     max_moments: int = 20,
-    score_floor: float = 35.0,
-    score_gap: float = 35.0,
+    score_floor: float | None = None,
+    score_gap: float | None = None,
     max_total_duration: float | None = None,
-    diversity_weight: float = 0.35,
+    diversity_weight: float | None = None,
 ) -> list[dict]:
     """
-    REBUILD: seleção com diversidade, não só top-N por score.
+    CAMADA DE COMPATIBILIDADE — não faz mais seleção editorial.
 
-    Mudanças em relação à versão antiga:
-      - teto de 6 subiu para 20 (e agora vem do settings.yaml);
-      - o corte por nota ficou menos agressivo (era floor 50 / gap 20);
-      - categorias repetidas perdem prioridade, pra não devolver 6 clutches
-        quando o VOD tem também um momento engraçado e uma história.
+    A partir da V2, quem escolhe os clipes é core/discovery.py, ANTES do
+    analysis.json ser salvo. Os momentos que chegam aqui já passaram por
+    avaliação editorial, deduplicação e diversidade.
 
-    diversity_weight=0 reproduz exatamente o comportamento antigo de
-    ranking puro por score.
+    Refazer a seleção aqui seria um segundo ranking concorrente — foi
+    exatamente o problema que a integração da V2 veio eliminar. Por isso
+    esta função agora só:
+
+      - respeita o teto de quantidade pedido pela chamada;
+      - respeita o teto de duração somada (usado na montagem única, pra
+        caber no limite da plataforma);
+      - devolve em ordem cronológica.
+
+    Os parâmetros score_floor, score_gap e diversity_weight continuam na
+    assinatura para não quebrar chamadas existentes, mas são IGNORADOS.
+    Serão removidos quando nenhuma chamada antiga depender deles.
     """
     if not all_moments:
         return []
 
-    sorted_moments = sorted(all_moments, key=lambda m: m["score"], reverse=True)
-    top_score = sorted_moments[0]["score"]
-    threshold = max(score_floor, top_score - score_gap)
-    candidates = [m for m in sorted_moments if m["score"] >= threshold]
-
-    ranked = rank_with_diversity(
-        candidates, max_clips=max_moments, diversity_weight=diversity_weight
-    )
+    # Já vêm ordenados por nota do discovery; reordenamos só por garantia.
+    ordered = sorted(all_moments, key=lambda m: m.get("score", 0), reverse=True)
 
     selected = []
     total_duration = 0.0
-    for m in ranked:
+    for m in ordered:
+        if len(selected) >= max_moments:
+            break
         duration = m["end_seconds"] - m["context_start_seconds"]
-        if max_total_duration is not None and total_duration + duration > max_total_duration and selected:
+        if (max_total_duration is not None
+                and total_duration + duration > max_total_duration
+                and selected):
             continue
         selected.append(m)
         total_duration += duration
 
     if len(selected) < min_moments:
-        selected = sorted_moments[:min_moments]
+        selected = ordered[:min_moments]
 
     selected.sort(key=lambda m: m["start_seconds"])
     return selected
@@ -701,9 +710,11 @@ def run_montage(
     if auto:
         platform_cap = PLATFORM_DURATION_PRESETS.get(platform) if platform else None
         sel = _selection_config()
-        sel["max_moments"] = max_moments or sel["max_moments"]
         top_moments = select_moments_automatically(
-            analysis["moments"], max_total_duration=platform_cap, **sel
+            analysis["moments"],
+            max_moments=max_moments or sel["max_moments"],
+            min_moments=sel["min_moments"],
+            max_total_duration=platform_cap,
         )
     else:
         top_moments = select_moments_for_montage(analysis["moments"], score_threshold, max_duration)
@@ -800,9 +811,6 @@ def export_separate_clips(
     top_moments = select_moments_automatically(
         analysis["moments"], max_moments=max_moments or sel["max_moments"],
         min_moments=sel["min_moments"],
-        score_floor=score_floor if score_floor is not None else sel["score_floor"],
-        score_gap=score_gap if score_gap is not None else sel["score_gap"],
-        diversity_weight=sel["diversity_weight"],
     )
     if not top_moments:
         return []

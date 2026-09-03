@@ -34,9 +34,11 @@ class DiscoveryReport:
     """
 
     def __init__(self):
+        self.all_candidates: list = []
         self.events = 0
         self.stories = 0
         self.raw_candidates = 0
+        self.valid_candidates = 0
         self.after_score_floor = 0
         self.after_dedup = 0
         self.final = 0
@@ -47,6 +49,7 @@ class DiscoveryReport:
             "events": self.events,
             "stories": self.stories,
             "raw_candidates": self.raw_candidates,
+            "valid_candidates": self.valid_candidates,
             "after_score_floor": self.after_score_floor,
             "after_dedup": self.after_dedup,
             "final": self.final,
@@ -59,7 +62,8 @@ class DiscoveryReport:
             f"[STORIES]   {self.stories} histórias",
             f"[CANDIDATES] {self.raw_candidates} candidatos "
             f"(por história: {self.per_story})",
-            f"[RANKING]   {self.raw_candidates} → {self.after_score_floor} viáveis",
+            f"[VALIDATION] {self.raw_candidates} → {self.valid_candidates} válidos",
+            f"[RANKING]   {self.valid_candidates} → {self.after_score_floor} acima do mínimo",
             f"[DEDUP]     {self.after_score_floor} → {self.after_dedup} únicos",
             f"[FINAL]     {self.final} clipes selecionados",
         ]
@@ -97,7 +101,12 @@ def discover_and_select(
     stories = build_stories(
         events, transcript,
         max_silence_seconds=cand_cfg.get("story_max_silence_seconds", 4.0),
-        max_story_seconds=duration_cfg.get("absolute_max_seconds", 75.0),
+        # §9: a história é o CONTEXTO; o clipe é uma interpretação dela.
+        # Uma história de 120s pode gerar candidatos de 30s, 45s e 65s — por
+        # isso o limite dela é independente do limite do clipe.
+        max_story_seconds=float(
+            (config.get("story", {}) or {}).get("story_max_duration_seconds", 180.0)
+        ),
     )
     report.stories = len(stories)
 
@@ -130,12 +139,28 @@ def discover_and_select(
         weights=(config.get("editorial", {}) or {}) or None,
     )
 
+    # VALIDATION: descarta só o que é inutilizável (curto demais, sem
+    # payoff dentro do recorte). Nada é cortado por NOTA nesta etapa —
+    # notas só entram depois de todos os candidatos existirem (§8).
+    min_clip = float(duration_cfg.get("absolute_min_seconds", 8.0))
+    valid = []
+    for c in all_candidates:
+        if c.duration_seconds < max(min_clip * 0.5, 3.0):
+            c.selection_reason = "curto demais pra virar clipe"
+            continue
+        if not (c.start_seconds <= c.payoff_seconds <= c.end_seconds):
+            c.selection_reason = "o payoff ficou fora do recorte"
+            continue
+        valid.append(c)
+    report.valid_candidates = len(valid)
+    report.all_candidates = all_candidates
+
     min_score = float(selection_cfg.get("min_score", 40.0))
     viable = [
-        c for c in all_candidates
+        c for c in valid
         if c.heuristic_scores.get("overall", 0) >= min_score
     ]
-    for c in all_candidates:
+    for c in valid:
         if c not in viable:
             c.selection_reason = f"nota abaixo do mínimo ({min_score})"
     report.after_score_floor = len(viable)
