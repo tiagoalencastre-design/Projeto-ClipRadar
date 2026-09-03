@@ -132,7 +132,9 @@ class RenderClipRequest(BaseModel):
     burn_captions: bool = True
     subtitle_style: Literal["classic", "bold_yellow", "minimal_top", "boxed"] = "classic"
     preset: Literal["clean", "impact", "streamer"] = "clean"
-    layout: Literal["gameplay_full", "gameplay_facecam", "facecam_focus"] = "gameplay_facecam"
+    layout: Literal[
+        "gameplay_full", "gameplay_facecam", "facecam_focus", "blur_background"
+    ] = "gameplay_facecam"
 
 
 # ---------- Autenticação ----------

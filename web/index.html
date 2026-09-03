@@ -587,6 +587,7 @@ const translations = {
     transcript_hint: "Clique numa frase pra pular o preview até ali. Segure Shift e clique em outra pra selecionar um trecho e ajustar o clipe.",
     label_layout: "Layout",
     layout_gameplay_full: "Gameplay cheio", layout_gameplay_facecam: "Gameplay + facecam", layout_facecam_focus: "Facecam em foco",
+    layout_blur_background: "Fundo borrado",
     review_render_btn: "Renderizar", review_rendering: "Renderizando...",
     dirty_banner: "Alterações ainda não renderizadas",
     review_download: "Baixar clip",
@@ -623,6 +624,7 @@ const translations = {
     layout_gameplay_full: "Gameplay",
     layout_gameplay_facecam: "Gameplay + Facecam",
     layout_facecam_focus: "Facecam em foco",
+    layout_blur_background: "Fundo borrado",
     preset_streamer: "Streamer",
     dirty_notice: "Você mudou algo — clique em \"Renderizar novamente\" pra aplicar.",
     rerender_btn: "Renderizar novamente",
@@ -677,6 +679,7 @@ const translations = {
     transcript_hint: "Click a phrase to jump the preview there. Hold Shift and click another to select a range and adjust the clip.",
     label_layout: "Layout",
     layout_gameplay_full: "Full gameplay", layout_gameplay_facecam: "Gameplay + facecam", layout_facecam_focus: "Facecam focus",
+    layout_blur_background: "Blurred background",
     review_render_btn: "Render", review_rendering: "Rendering...",
     dirty_banner: "Changes not rendered yet",
     review_download: "Download clip",
@@ -753,6 +756,7 @@ const translations = {
     transcript_hint: "Haz clic en una frase para saltar la vista previa ahí. Mantén Shift y haz clic en otra para seleccionar un tramo y ajustar el clip.",
     label_layout: "Diseño",
     layout_gameplay_full: "Gameplay completo", layout_gameplay_facecam: "Gameplay + facecam", layout_facecam_focus: "Facecam en foco",
+    layout_blur_background: "Fondo desenfocado",
     review_render_btn: "Renderizar", review_rendering: "Renderizando...",
     dirty_banner: "Cambios aún no renderizados",
     review_download: "Descargar clip",
@@ -1558,6 +1562,7 @@ function renderReviewPanel(candidate, state) {
         <div class="tab ${state.layout === 'gameplay_full' ? 'active' : ''}" data-value="gameplay_full">${T.layout_gameplay_full}</div>
         <div class="tab ${state.layout === 'gameplay_facecam' ? 'active' : ''}" data-value="gameplay_facecam">${T.layout_gameplay_facecam}</div>
         <div class="tab ${state.layout === 'facecam_focus' ? 'active' : ''}" data-value="facecam_focus">${T.layout_facecam_focus}</div>
+        <div class="tab ${state.layout === 'blur_background' ? 'active' : ''}" data-value="blur_background">${T.layout_blur_background}</div>
       </div>
     </div>
     <div class="panel-group">

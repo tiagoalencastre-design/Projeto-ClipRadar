@@ -78,7 +78,10 @@ DEFAULT_PRESET = "clean"
 # rosto detectado (comportamento antigo do auto_face_crop), e
 # "gameplay_facecam" é NOVO: empilha gameplay em cima e a webcam do criador
 # embaixo, só quando um rosto é realmente detectado (senão cai pra gameplay_full).
-LAYOUT_OPTIONS = {"gameplay_full", "gameplay_facecam", "facecam_focus"}
+# "blur_background" é o layout estilo TikTok/Reels: o vídeo inteiro aparece
+# no meio (sem cortar nada das laterais) e o fundo é uma cópia ampliada e
+# desfocada dele mesmo, preenchendo a tela vertical no lugar das tarjas pretas.
+LAYOUT_OPTIONS = {"gameplay_full", "gameplay_facecam", "facecam_focus", "blur_background"}
 DEFAULT_LAYOUT = "gameplay_full"
 
 PLATFORM_DURATION_PRESETS = {
@@ -375,6 +378,39 @@ def _build_facecam_stack_filter(bbox: tuple[float, float, float, float], play_re
     )
 
 
+def _build_blur_background_filter(play_res: tuple[int, int], blur_strength: int = 22) -> str:
+    """
+    Layout "blur_background": vídeo inteiro no centro, fundo borrado.
+
+    POR QUE ESTE LAYOUT EXISTE: o corte central 9:16 de um gameplay 16:9
+    joga fora quase 70% da largura da tela. Em jogo, é justamente nas
+    laterais que ficam minimapa, kill feed, vida e munição — o corte
+    central apaga tudo isso.
+
+    Aqui o frame inteiro é preservado: ele entra escalado pela largura, e o
+    espaço que sobraria em cima e embaixo é preenchido com uma cópia do
+    próprio vídeo, ampliada até cobrir a tela e desfocada. Fica muito melhor
+    que tarja preta e não custa nada em qualidade do conteúdo principal.
+
+    Retorna um filter_complex terminando em [__stacked], que é o rótulo que
+    o resto da montagem (zoom, legenda) espera.
+    """
+    width, height = play_res
+    return (
+        f"[0:v]split=2[__bg][__fg];"
+        # FUNDO: amplia até cobrir a tela inteira, corta o excedente e borra.
+        # force_original_aspect_ratio=increase garante que não sobre buraco.
+        f"[__bg]scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},boxblur={blur_strength}:2,"
+        # escurece um pouco pro fundo não competir com o conteúdo principal
+        f"eq=brightness=-0.06[__bgout];"
+        # FRENTE: o vídeo inteiro, escalado pela largura. -2 mantém a
+        # proporção e garante altura par (exigência do codec H.264).
+        f"[__fg]scale={width}:-2[__fgout];"
+        f"[__bgout][__fgout]overlay=(W-w)/2:(H-h)/2[__stacked]"
+    )
+
+
 def _cut_single_interval(
     video_path: str,
     interval_start: float,
@@ -403,7 +439,10 @@ def _cut_single_interval(
     preset_config = EDIT_PRESETS.get(preset, EDIT_PRESETS[DEFAULT_PRESET])
 
     facecam_complex = None
-    if orientation == "vertical" and layout == "gameplay_facecam":
+    if orientation == "vertical" and layout == "blur_background":
+        # Não depende de detecção de rosto: funciona em qualquer vídeo.
+        facecam_complex = _build_blur_background_filter(play_res)
+    elif orientation == "vertical" and layout == "gameplay_facecam":
         bbox = detect_face_bbox_fraction(video_path, interval_start, interval_end)
         if bbox:
             facecam_complex = _build_facecam_stack_filter(bbox, play_res)
