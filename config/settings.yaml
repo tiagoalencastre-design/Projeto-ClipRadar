@@ -35,13 +35,62 @@ candidate_moments:
   # Menor = mais clipes e mais curtos. Maior = clipes mais longos.
   story_max_silence_seconds: 4.0
 
-# Quantidade e variedade dos clipes gerados.
+# Quantidade e variedade dos clipes gerados (usado pelo montage.py).
 clip_selection:
-  max_clips: 20            # teto real; antes era 6 fixo no código
+  max_clips: 20
   min_clips: 1
-  score_floor: 35.0        # nota mínima pra virar clipe
-  score_gap: 35.0          # distância aceitável do melhor clipe
-  diversity_weight: 0.35   # 0 = só score; 1 = variedade acima de tudo
+  score_floor: 35.0
+  score_gap: 35.0
+  diversity_weight: 0.35
+
+# ============================================================
+# V2 — descoberta e seleção separadas
+# ============================================================
+# A ideia central: DESCOBRIR MUITO, FILTRAR DEPOIS. O sistema antigo
+# filtrava enquanto descobria, e por isso perdia oportunidades.
+
+discovery:
+  # Teto de candidatos brutos. Alto de propósito: nesta fase o sistema deve
+  # ser permissivo. Um VOD de 2h pode legitimamente gerar 50-100.
+  max_raw_candidates: 100
+
+selection:
+  # Quantos clipes entregar no fim. O número REAL sai da qualidade
+  # disponível — este é só o teto.
+  max_final_clips: 10
+  min_score: 40.0
+  diversity_enabled: true
+  category_diversity_weight: 0.35   # evita 5 clipes do mesmo tipo
+  temporal_diversity_weight: 0.2    # evita 5 clipes seguidos do mesmo trecho
+
+clip_duration:
+  # Limites, NÃO metas. A duração é consequência do conteúdo: uma história
+  # pode legitimamente ter 18s, 42s ou 63s.
+  absolute_min_seconds: 8
+  ideal_min_seconds: 15
+  ideal_max_seconds: 45
+  absolute_max_seconds: 75
+
+context:
+  min_context_seconds: 2
+  max_context_seconds: 45
+
+deduplication:
+  temporal_overlap_threshold: 0.6
+  semantic_similarity_threshold: 0.75
+
+# Pesos da avaliação editorial (core/editorial.py).
+# standalone tem o maior peso de propósito: "quem assistir só este clipe
+# entende o que aconteceu?" é a pergunta que mais separa clipe bom de ruim.
+editorial:
+  standalone: 1.4
+  context: 1.1
+  payoff: 1.2
+  hook: 1.0
+  narrative_completeness: 1.0
+  emotion: 0.9
+  ending: 0.8
+  originality: 0.3
 
 # Pesos do Content Score — SOMA NÃO PRECISA SER 100, é normalizado.
 # Este é o "perfil default". Fase 3 vai ter 1 perfil destes por canal/usuário,

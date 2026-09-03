@@ -147,3 +147,133 @@ def rank_with_diversity(
         remaining.remove(best)
 
     return selected
+
+
+# ============================================================
+# V2 — assinatura de conteúdo e diversidade temporal
+# ============================================================
+
+def content_signature(candidate) -> dict:
+    """
+    Identidade de conteúdo de um candidato (§19).
+
+    Junta região temporal, categoria, payoff e vocabulário. Dois candidatos
+    com a mesma assinatura cobrem o mesmo acontecimento — mesmo que os
+    recortes tenham durações diferentes.
+    """
+    return {
+        "category": getattr(candidate, "category", "unknown"),
+        "payoff_bucket": round(getattr(candidate, "payoff_seconds", 0.0) / 5.0),
+        "tokens": _tokens(getattr(candidate, "transcript", "")),
+        "start": getattr(candidate, "start_seconds", 0.0),
+        "end": getattr(candidate, "end_seconds", 0.0),
+    }
+
+
+def same_content(a, b, text_threshold: float = 0.75) -> tuple[bool, str]:
+    """
+    Dois candidatos são o mesmo acontecimento?
+
+    IMPORTANTE (§19): dois candidatos da MESMA história podem coexistir se
+    forem propostas editoriais realmente diferentes. Por isso o mesmo payoff
+    só descarta quando os recortes também são parecidos em tamanho — um
+    FULL_STORY de 40s e um PAYOFF_REACTION de 12s são leituras distintas.
+    """
+    sa, sb = content_signature(a), content_signature(b)
+
+    overlap = time_overlap(sa["start"], sa["end"], sb["start"], sb["end"])
+    if overlap < 0.2:
+        return False, ""
+
+    if sa["payoff_bucket"] == sb["payoff_bucket"] and sa["category"] == sb["category"]:
+        longer = max(a.duration_seconds, b.duration_seconds)
+        shorter = min(a.duration_seconds, b.duration_seconds)
+        if shorter / max(longer, 0.1) > 0.65:
+            return True, "mesmo payoff e recorte parecido"
+
+    if sa["tokens"] and sb["tokens"]:
+        similarity = len(sa["tokens"] & sb["tokens"]) / len(sa["tokens"] | sb["tokens"])
+        if similarity >= text_threshold and overlap >= 0.5:
+            return True, f"mesma fala ({similarity:.0%})"
+
+    # Contido não é duplicado. Um PAYOFF_REACTION de 12s vive inteiro dentro
+    # de um FULL_STORY de 40s — a sobreposição é 100%, mas as propostas
+    # editoriais são diferentes (§19). Só é duplicata quando os recortes
+    # também têm tamanho parecido.
+    longer = max(a.duration_seconds, b.duration_seconds)
+    shorter = min(a.duration_seconds, b.duration_seconds)
+    similar_length = shorter / max(longer, 0.1) > 0.7
+    if overlap >= 0.9 and similar_length:
+        return True, "cobre praticamente o mesmo trecho"
+
+    return False, ""
+
+
+def deduplicate_candidates(candidates: list, text_threshold: float = 0.75) -> list:
+    """Mantém o de maior nota em cada grupo de candidatos equivalentes."""
+    ordered = sorted(
+        candidates,
+        key=lambda c: c.heuristic_scores.get("overall", 0),
+        reverse=True,
+    )
+    kept: list = []
+    for candidate in ordered:
+        duplicate = False
+        for existing in kept:
+            duplicate, reason = same_content(candidate, existing, text_threshold)
+            if duplicate:
+                candidate.selection_reason = f"descartado: {reason}"
+                break
+        if not duplicate:
+            kept.append(candidate)
+    return kept
+
+
+def select_with_diversity(
+    candidates: list,
+    max_clips: int,
+    category_weight: float = 0.35,
+    temporal_weight: float = 0.2,
+    temporal_window: float = 120.0,
+) -> list:
+    """
+    Seleção final equilibrando nota, variedade de categoria e espalhamento
+    no tempo (§20).
+
+    A diversidade é FATOR, não regra: um VOD pode legitimamente render
+    vários clipes do mesmo tipo se forem excelentes — a penalidade desloca
+    o ranking, não proíbe.
+    """
+    remaining = list(candidates)
+    selected: list = []
+    used_categories: dict[str, int] = {}
+
+    while remaining and len(selected) < max_clips:
+        best, best_value = None, None
+        for c in remaining:
+            base = c.heuristic_scores.get("overall", 0)
+            repeats = used_categories.get(c.category, 0)
+            category_penalty = category_weight * base * (1 - 1 / (1 + repeats))
+
+            # Penaliza clipes colados no tempo a algo já escolhido.
+            near = sum(
+                1 for s in selected
+                if abs(s.start_seconds - c.start_seconds) < temporal_window
+            )
+            temporal_penalty = temporal_weight * base * (1 - 1 / (1 + near))
+
+            value = base - category_penalty - temporal_penalty
+            if best_value is None or value > best_value:
+                best, best_value = c, value
+
+        best.selected = True
+        best.selection_reason = (
+            f"nota {best.heuristic_scores.get('overall', 0)}, "
+            f"tipo {best.candidate_type}, categoria {best.category}"
+        )
+        selected.append(best)
+        used_categories[best.category] = used_categories.get(best.category, 0) + 1
+        remaining.remove(best)
+
+    selected.sort(key=lambda c: c.start_seconds)
+    return selected
