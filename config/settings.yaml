@@ -16,10 +16,32 @@ audio_analysis:
   window_seconds: 3.0
 
 candidate_moments:
-  # duração alvo dos clips candidatos, antes de expandir por contexto
-  min_duration_seconds: 12
-  max_duration_seconds: 60
-  context_padding_seconds: 8   # quanto o Context Builder pode "puxar pra trás" pra dar contexto
+  # REBUILD: a duração agora é CONSEQUÊNCIA do conteúdo, não uma meta.
+  # Estes dois são proteção contra caso degenerado, não alvo:
+  min_duration_seconds: 5      # abaixo disso não funciona em lugar nenhum
+  max_duration_seconds: 75     # acima disso não é short-form
+
+  # Quanto o clipe pode voltar pra dar contexto (busca início de frase).
+  context_padding_seconds: 10
+  # Quanto pode avançar depois do payoff pra fechar a frase.
+  tail_padding_seconds: 8
+
+  # Janela de agrupamento de sinais num evento. Medida a partir do INÍCIO do
+  # grupo — antes era medida do último sinal, e isso encadeava: sinais a
+  # cada 4s transformavam 3 minutos num evento só.
+  event_window_seconds: 6.0
+
+  # Silêncio a partir do qual dois eventos viram histórias diferentes.
+  # Menor = mais clipes e mais curtos. Maior = clipes mais longos.
+  story_max_silence_seconds: 4.0
+
+# Quantidade e variedade dos clipes gerados.
+clip_selection:
+  max_clips: 20            # teto real; antes era 6 fixo no código
+  min_clips: 1
+  score_floor: 35.0        # nota mínima pra virar clipe
+  score_gap: 35.0          # distância aceitável do melhor clipe
+  diversity_weight: 0.35   # 0 = só score; 1 = variedade acima de tudo
 
 # Pesos do Content Score — SOMA NÃO PRECISA SER 100, é normalizado.
 # Este é o "perfil default". Fase 3 vai ter 1 perfil destes por canal/usuário,
@@ -29,21 +51,21 @@ content_score_weights:
   emotional_reaction: 1.0
   narrative_context: 0.8
   retention_potential: 1.0
-  originality: 0.6
+  originality: 0.0   # era constante 60.0 — não distinguia nada, só diluía a média
   # abaixo: só ficam ativos quando há dado de chat/audiência disponível (Fase 2+)
   chat_reaction: 0.0
   comment_potential: 0.0
 
-  # FASE 5 — sinais novos. TODOS COMEÇAM EM 0.0 de propósito: eles são
-  # calculados e aparecem no relatório, mas não mudam nenhum score até
-  # você dar peso a eles. Suba um de cada vez (ex: hook: 0.5) e compare o
-  # resultado antes de subir o próximo.
-  hook: 0.0                  # força do começo do clipe
-  surprise: 0.0              # maior salto brusco de intensidade
-  visual_clarity: 0.0        # ritmo de cortes legível
-  ending_quality: 0.0        # o clipe termina em alta
+  # REBUILD: peso alto de propósito — um momento intenso que não se entende
+  # sozinho não deve vencer um clipe completo e compreensível.
+  story_completeness: 1.4
+  # Sinais da Fase 5, agora ATIVOS (antes eram calculados e ignorados):
+  hook: 0.9
+  surprise: 0.6
+  ending_quality: 0.7
+  visual_clarity: 0.3
 
-  # Declarados, sem dado real ainda — deixe em 0.0.
+  # Ainda sem dado real — deixe em 0.0 até existir base.
   share_potential: 0.0
   vertical_suitability: 0.0
   viral_potential: 0.0

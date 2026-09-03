@@ -1,0 +1,10 @@
+{
+  "video": "live_valorant_01.mp4",
+  "game": "valorant",
+  "_comentario": "Apague este arquivo de exemplo. Marque os tempos em SEGUNDOS a partir do inicio do VOD. Nao precisa ser exato: alguns segundos a mais ou a menos nao atrapalham.",
+  "moments": [
+    {"start": 124.0, "end": 152.0, "label": "clutch 1v3"},
+    {"start": 401.5, "end": 420.0, "label": "reacao ao ace"},
+    {"start": 933.0, "end": 961.0, "label": "tilt engracado"}
+  ]
+}

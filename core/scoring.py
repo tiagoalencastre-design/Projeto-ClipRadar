@@ -7,8 +7,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import uuid
 
+from core.boundaries import detect_boundaries
+from core.dedup import deduplicate
 from core.detection import RawSignal
+from core.events import build_events
 from core.scoring_signals import SignalContext, compute_new_signals
+from core.story import build_stories
 from core.transcription import TranscriptSegment, text_around
 
 
@@ -27,6 +31,9 @@ class ContentScoreBreakdown:
     # até você decidir dar peso a eles.
     hook: float = 0.0
     surprise: float = 0.0
+    # REBUILD: peso alto de propósito. Um momento intenso que não se entende
+    # sozinho NÃO deve vencer um clipe completo e compreensível.
+    story_completeness: float = 0.0
     visual_clarity: float = 0.0
     ending_quality: float = 0.0
     # Declarados, sem dado real ainda — ficam em 0.0 de propósito.
@@ -55,6 +62,14 @@ class CandidateMoment:
     signal_sources: list[str] = field(default_factory=list)
     transcript_segments: list[dict] = field(default_factory=list)
     transcript_words: list[dict] = field(default_factory=list)
+    # REBUILD — campos novos. Opcionais: quem consumia o formato antigo
+    # continua funcionando sem alteração.
+    category: str = "unknown"
+    confidence: float = 0.0
+    payoff_seconds: float = 0.0
+    boundary_reason: str = ""
+    story_reason: str = ""
+    event_count: int = 1
 
 
 def _cluster_signals(signals: list[RawSignal], cluster_gap_seconds: float) -> list[list[RawSignal]]:
@@ -83,11 +98,14 @@ def _apply_context_builder(cluster_start: float, transcript: list[TranscriptSegm
     return max(cluster_start - padding_seconds / 2, 0)
 
 
+# REBUILD: "mano", "cara", "bro", "yo" saíram desta lista. Em português
+# falado são muletas — aparecem em quase toda frase e geravam falso
+# positivo em escala, inflando o score de trechos comuns.
 HYPE_KEYWORDS = [
     "no way", "let's go", "insane", "unbelievable", "oh my god", "what the",
-    "holy", "clutch", "ez", "gg", "wow", "yo", "bro",
+    "holy", "clutch", "ez", "gg", "wow",
     "não acredito", "eu não acredito", "que isso", "vai vai", "isso aí",
-    "meu deus", "caraca", "mano", "cara", "insano", "absurdo",
+    "meu deus", "caraca", "caramba", "insano", "absurdo", "surreal",
 ]
 
 
@@ -185,51 +203,104 @@ def _words_in_range(transcript: list[TranscriptSegment], start: float, end: floa
     return words
 
 
+def _story_completeness(story, boundaries) -> float:
+    """
+    O clipe se entende sozinho?
+
+    Esta é a métrica que o briefing pede com peso significativo — e o motivo
+    é editorial: um grito sem contexto tem intensidade alta e valor zero.
+    """
+    score = 30.0
+    if boundaries.context_seconds >= 2.0:
+        score += 20.0            # tem preparação antes do payoff
+    if story.has_payoff_and_reaction:
+        score += 25.0            # acontece algo E há reação
+    if len(story.events) > 1:
+        score += 10.0            # tem desenvolvimento, não é um pico solto
+    if "início da fala" in boundaries.reason:
+        score += 10.0            # não começa no meio de uma frase
+    if "fim da frase" in boundaries.reason:
+        score += 5.0             # não corta a pessoa falando
+    return min(score, 100.0)
+
+
 def build_candidate_moments(
     signals: list[RawSignal],
     transcript: list[TranscriptSegment],
     config: dict,
 ) -> list[CandidateMoment]:
+    """
+    REBUILD: sinal -> evento -> história -> bordas -> score -> dedup.
+
+    A assinatura e o formato de saída são os mesmos de antes: o pipeline, o
+    montage e o front-end não precisam mudar nada.
+    """
     cand_cfg = config["candidate_moments"]
     weights = config["content_score_weights"]
 
-    clusters = _cluster_signals(
-        signals,
-        cluster_gap_seconds=cand_cfg.get("cluster_gap_seconds", 5.0),
+    events = build_events(
+        signals, transcript,
+        window_seconds=cand_cfg.get("event_window_seconds", 6.0),
+    )
+    stories = build_stories(
+        events, transcript,
+        max_silence_seconds=cand_cfg.get("story_max_silence_seconds", 4.0),
+        max_story_seconds=cand_cfg.get("max_duration_seconds", 75.0),
     )
 
     moments = []
-    for cluster in clusters:
-        raw_start = cluster[0].timestamp_seconds
-        raw_end = cluster[-1].timestamp_seconds + cand_cfg["min_duration_seconds"] / 2
-        if raw_end - raw_start < cand_cfg["min_duration_seconds"]:
-            raw_end = raw_start + cand_cfg["min_duration_seconds"]
-        raw_end = min(raw_end, raw_start + cand_cfg["max_duration_seconds"])
+    for story in stories:
+        boundaries = detect_boundaries(
+            story, transcript,
+            max_context_seconds=cand_cfg.get("context_padding_seconds", 10.0),
+            max_tail_seconds=cand_cfg.get("tail_padding_seconds", 8.0),
+            min_seconds=cand_cfg.get("min_duration_seconds", 5.0),
+            max_seconds=cand_cfg.get("max_duration_seconds", 75.0),
+        )
 
-        context_start = _apply_context_builder(raw_start, transcript, cand_cfg["context_padding_seconds"])
-        excerpt = text_around(transcript, raw_start, window_seconds=cand_cfg["context_padding_seconds"])
-        segments = _segments_in_range(transcript, context_start, raw_end)
-        words = _words_in_range(transcript, context_start, raw_end)
-
-        breakdown = _score_cluster(cluster, excerpt, raw_start, raw_end)
+        cluster = [s for e in story.events for s in e.signals]
+        excerpt = text_around(
+            transcript, boundaries.payoff_seconds,
+            window_seconds=max(boundaries.duration / 2, 5.0),
+        )
+        breakdown = _score_cluster(
+            cluster, excerpt, boundaries.hook_seconds, boundaries.exit_seconds
+        )
+        breakdown.story_completeness = _story_completeness(story, boundaries)
         total_score = breakdown.weighted_total(weights)
 
         moments.append(CandidateMoment(
             clip_id=f"CLIP-{uuid.uuid4().hex[:8].upper()}",
-            start_seconds=raw_start,
-            end_seconds=raw_end,
-            context_start_seconds=context_start,
+            start_seconds=boundaries.hook_seconds,
+            end_seconds=boundaries.exit_seconds,
+            context_start_seconds=boundaries.hook_seconds,
             transcript_excerpt=excerpt,
             breakdown=breakdown,
             score=total_score,
-            signal_sources=list({s.source for s in cluster}),
-            transcript_segments=segments,
-            transcript_words=words,
+            signal_sources=sorted({s.source for s in cluster}),
+            transcript_segments=_segments_in_range(
+                transcript, boundaries.hook_seconds, boundaries.exit_seconds),
+            transcript_words=_words_in_range(
+                transcript, boundaries.hook_seconds, boundaries.exit_seconds),
+            category=story.main_category,
+            confidence=round(max(e.confidence for e in story.events), 3),
+            payoff_seconds=boundaries.payoff_seconds,
+            boundary_reason=boundaries.reason,
+            story_reason=story.reason,
+            event_count=len(story.events),
         ))
 
     moments.sort(key=lambda m: m.score, reverse=True)
-    moments = _suppress_overlapping(
-        moments,
-        min_gap_seconds=cand_cfg.get("min_gap_between_clips_seconds", 15.0),
-    )
-    return moments
+
+    # REBUILD: dedup por CONTEÚDO, não por distância de relógio. Dois
+    # momentos podem ficar próximos e ambos sobreviverem, desde que cubram
+    # acontecimentos diferentes.
+    as_dicts = [
+        {"context_start_seconds": m.context_start_seconds,
+         "end_seconds": m.end_seconds,
+         "transcript_excerpt": m.transcript_excerpt,
+         "score": m.score, "clip_id": m.clip_id}
+        for m in moments
+    ]
+    kept_ids = {d["clip_id"] for d in deduplicate(as_dicts)}
+    return [m for m in moments if m.clip_id in kept_ids]

@@ -37,6 +37,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.thumbnail import extract_thumbnail, derive_thumbnail_text, get_thumbnail_text
+from core.dedup import rank_with_diversity
 from core.subtitles import build_ass_karaoke, STYLE_PRESETS, DEFAULT_STYLE
 from core.face_crop import detect_face_offset_fraction, build_face_aware_crop_filter, detect_face_bbox_fraction
 from core.pipeline import load_config
@@ -153,28 +154,58 @@ def select_moments_for_montage(all_moments: list[dict], score_threshold: float, 
     return selected
 
 
+def _selection_config() -> dict:
+    """Lê clip_selection do settings.yaml. Se faltar, usa os padrões — assim
+    um settings.yaml antigo continua funcionando."""
+    try:
+        cfg = load_config().get("clip_selection", {}) or {}
+    except Exception:
+        cfg = {}
+    return {
+        "max_moments": int(cfg.get("max_clips", 20)),
+        "min_moments": int(cfg.get("min_clips", 1)),
+        "score_floor": float(cfg.get("score_floor", 35.0)),
+        "score_gap": float(cfg.get("score_gap", 35.0)),
+        "diversity_weight": float(cfg.get("diversity_weight", 0.35)),
+    }
+
+
 def select_moments_automatically(
     all_moments: list[dict],
     min_moments: int = 1,
-    max_moments: int = 6,
-    score_floor: float = 50.0,
-    score_gap: float = 20.0,
+    max_moments: int = 20,
+    score_floor: float = 35.0,
+    score_gap: float = 35.0,
     max_total_duration: float | None = None,
+    diversity_weight: float = 0.35,
 ) -> list[dict]:
+    """
+    REBUILD: seleção com diversidade, não só top-N por score.
+
+    Mudanças em relação à versão antiga:
+      - teto de 6 subiu para 20 (e agora vem do settings.yaml);
+      - o corte por nota ficou menos agressivo (era floor 50 / gap 20);
+      - categorias repetidas perdem prioridade, pra não devolver 6 clutches
+        quando o VOD tem também um momento engraçado e uma história.
+
+    diversity_weight=0 reproduz exatamente o comportamento antigo de
+    ranking puro por score.
+    """
     if not all_moments:
         return []
 
     sorted_moments = sorted(all_moments, key=lambda m: m["score"], reverse=True)
     top_score = sorted_moments[0]["score"]
     threshold = max(score_floor, top_score - score_gap)
-
     candidates = [m for m in sorted_moments if m["score"] >= threshold]
+
+    ranked = rank_with_diversity(
+        candidates, max_clips=max_moments, diversity_weight=diversity_weight
+    )
 
     selected = []
     total_duration = 0.0
-    for m in candidates:
-        if len(selected) >= max_moments:
-            break
+    for m in ranked:
         duration = m["end_seconds"] - m["context_start_seconds"]
         if max_total_duration is not None and total_duration + duration > max_total_duration and selected:
             continue
@@ -636,7 +667,7 @@ def _persist_edit_plans(analysis_path: str, top_moments: list[dict]) -> None:
 def run_montage(
     analysis_path: str,
     auto: bool = True,
-    max_moments: int = 6,
+    max_moments: int = 20,
     score_threshold: float = 65.0,
     max_duration: float = 90.0,
     platform: str | None = None,
@@ -669,8 +700,10 @@ def run_montage(
 
     if auto:
         platform_cap = PLATFORM_DURATION_PRESETS.get(platform) if platform else None
+        sel = _selection_config()
+        sel["max_moments"] = max_moments or sel["max_moments"]
         top_moments = select_moments_automatically(
-            analysis["moments"], max_moments=max_moments, max_total_duration=platform_cap
+            analysis["moments"], max_total_duration=platform_cap, **sel
         )
     else:
         top_moments = select_moments_for_montage(analysis["moments"], score_threshold, max_duration)
@@ -724,7 +757,7 @@ def run_montage(
 
 def export_separate_clips(
     analysis_path: str,
-    max_moments: int = 6,
+    max_moments: int = 20,
     score_floor: float = 50.0,
     score_gap: float = 20.0,
     platform: str | None = None,
@@ -763,8 +796,13 @@ def export_separate_clips(
     # aqui não faz sentido um teto de DURAÇÃO SOMADA (isso era só pro modo de
     # montagem única caber numa plataforma) — cada clip tem sua duração
     # própria, já limitada pelo min/max_duration_seconds do settings.yaml
+    sel = _selection_config()
     top_moments = select_moments_automatically(
-        analysis["moments"], max_moments=max_moments, score_floor=score_floor, score_gap=score_gap,
+        analysis["moments"], max_moments=max_moments or sel["max_moments"],
+        min_moments=sel["min_moments"],
+        score_floor=score_floor if score_floor is not None else sel["score_floor"],
+        score_gap=score_gap if score_gap is not None else sel["score_gap"],
+        diversity_weight=sel["diversity_weight"],
     )
     if not top_moments:
         return []
