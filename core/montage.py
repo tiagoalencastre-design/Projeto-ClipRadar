@@ -416,7 +416,8 @@ WATERMARK_PATH = Path(__file__).resolve().parent.parent / "web" / "assets" / "wa
 
 
 def build_watermark_filter(
-    play_res: tuple[int, int], opacity: float = 0.75, margin: int = 34
+    play_res: tuple[int, int], opacity: float = 0.75, margin: int = 34,
+    image_path: Path | str | None = None,
 ) -> str | None:
     """
     Marca d'água do plano grátis, no canto inferior direito.
@@ -428,26 +429,33 @@ def build_watermark_filter(
     Devolve None se o arquivo da marca não existir: é melhor entregar o
     clipe sem marca do que falhar a renderização inteira por causa dela.
     """
-    if not WATERMARK_PATH.exists():
+    source = Path(image_path) if image_path else WATERMARK_PATH
+    if not source.exists():
         return None
 
     width = max(int(play_res[0] * 0.30), 120)   # ~30% da largura do vídeo
     return (
-        f"movie='{WATERMARK_PATH.as_posix()}'[__wm];"
+        f"movie='{source.as_posix()}'[__wm];"
         f"[__wm]scale={width}:-1,format=rgba,"
         f"colorchannelmixer=aa={opacity}[__wms];"
         f"[__wms]null[__wmf]"
     )
 
 
-def append_watermark(filter_complex: str, play_res: tuple[int, int]) -> str:
+def append_watermark(
+    filter_complex: str, play_res: tuple[int, int],
+    image_path: Path | str | None = None, opacity: float = 0.75,
+) -> str:
     """
     Encaixa a marca no fim de um filter_complex que termina em [__stacked].
+
+    image_path aponta pra logo do canal (Brand Kit, plano Studio). Sem ela,
+    usa a marca do ClipRadar.
 
     Feito como etapa separada pra funcionar com QUALQUER layout — corte
     central, facecam empilhado ou fundo borrado.
     """
-    watermark = build_watermark_filter(play_res)
+    watermark = build_watermark_filter(play_res, opacity=opacity, image_path=image_path)
     if not watermark:
         return filter_complex
 
@@ -508,6 +516,7 @@ def _cut_single_interval(
     preset: str = DEFAULT_PRESET,
     layout: str | None = None,
     watermark: bool = False,
+    watermark_path: str | None = None,
 ) -> None:
     """
     watermark=True carimba a marca do ClipRadar (plano grátis). Default
@@ -540,7 +549,10 @@ def _cut_single_interval(
         base_filter = VERTICAL_FILTER if orientation == "vertical" else HORIZONTAL_FILTER
         facecam_complex = f"[0:v]{base_filter}[__stacked]"
     if watermark and facecam_complex:
-        facecam_complex = append_watermark(facecam_complex, play_res)
+        # Logo do canal (Brand Kit) tem prioridade sobre a marca do ClipRadar.
+        facecam_complex = append_watermark(
+            facecam_complex, play_res, image_path=watermark_path
+        )
 
     vf_parts = None
     filter_chain = None
@@ -826,6 +838,8 @@ def run_montage(
     edit_plan_config: dict | None = None,
     preset: str = DEFAULT_PRESET,
     output_dir: str = "data/clips",
+    watermark: bool = False,
+    watermark_path: str | None = None,
 ) -> tuple[str | None, str | None, dict | None, float | None]:
     """
     Retorna (caminho_do_video, caminho_do_thumbnail, edit_plan_do_melhor_momento, duracao_segundos).
@@ -872,6 +886,7 @@ def run_montage(
                 srt_dir=tmp_dir, subtitle_style=subtitle_style,
                 dynamic_zoom=dynamic_zoom, trim_dead_air=trim_dead_air, auto_face_crop=auto_face_crop,
                 edit_plan=moment.get("_edit_plan"), preset=preset,
+                watermark=watermark, watermark_path=watermark_path,
             )
             return index, str(tmp_path)
 
@@ -916,6 +931,8 @@ def export_separate_clips(
     edit_plan_config: dict | None = None,
     preset: str = DEFAULT_PRESET,
     output_dir: str = "data/clips",
+    watermark: bool = False,
+    watermark_path: str | None = None,
 ) -> list[dict]:
     """
     Modo "clipes separados" (inspirado no OpusClip/Vizard, e priorizado no
@@ -965,6 +982,7 @@ def export_separate_clips(
             subtitle_style=subtitle_style, dynamic_zoom=dynamic_zoom,
             trim_dead_air=trim_dead_air, auto_face_crop=auto_face_crop,
             edit_plan=moment.get("_edit_plan"), preset=preset,
+            watermark=watermark, watermark_path=watermark_path,
         )
         thumb_path = output_dir_path / f"{moment['clip_id']}.jpg"
         thumb_text = get_thumbnail_text(moment.get("transcript_excerpt", ""), ai_title_config)
@@ -1071,6 +1089,8 @@ def render_single_clip(
     layout: str = DEFAULT_LAYOUT,
     ai_title_config: dict | None = None,
     output_dir: str = "data/clips",
+    watermark: bool = False,
+    watermark_path: str | None = None,
 ) -> dict:
     """
     Renderiza (ou re-renderiza) UM ÚNICO momento sob demanda, com ajustes
@@ -1118,6 +1138,7 @@ def render_single_clip(
         subtitle_style=subtitle_style, dynamic_zoom=False, trim_dead_air=False,
         auto_face_crop=False, edit_plan=moment.get("edit_plan"), preset=preset,
         layout=layout, start_override=start, end_override=end,
+        watermark=watermark, watermark_path=watermark_path,
     )
 
     thumb_path = output_dir_path / f"{clip_id}_edited.jpg"

@@ -223,10 +223,16 @@ def _cleanup_old_jobs() -> None:
             del store[jid]
 
 
-def _try_acquire_job_slot() -> bool:
+# Vaga extra reservada ao plano Studio. Existe ALÉM do limite normal, pra
+# que um assinante nunca fique preso atrás de dois usuários grátis.
+PRIORITY_SLOTS = 1
+
+
+def _try_acquire_job_slot(priority: bool = False) -> bool:
     global _active_job_count
+    limit = MAX_CONCURRENT_JOBS + (PRIORITY_SLOTS if priority else 0)
     with _active_jobs_lock:
-        if _active_job_count >= MAX_CONCURRENT_JOBS:
+        if _active_job_count >= limit:
             return False
         _active_job_count += 1
         return True
@@ -333,6 +339,64 @@ def _usage_status(user: dict) -> UsageStatus:
         minutes_used=UsageRepository.minutes_this_month(user["id"]),
         region=user.get("region") or "US",
     )
+
+
+BRAND_KIT_DIR = Path("data/brand_kits")
+BRAND_KIT_DIR.mkdir(parents=True, exist_ok=True)
+MAX_LOGO_BYTES = 3 * 1024 * 1024
+
+
+def brand_kit_path(user: dict) -> Path | None:
+    """Logo do canal, se o plano permitir E o arquivo existir."""
+    if not get_plan(user.get("plan")).brand_kit:
+        return None
+    path = BRAND_KIT_DIR / f"{user['storage_key']}.png"
+    return path if path.exists() else None
+
+
+@app.post("/api/brand-kit")
+async def upload_brand_kit(
+    file: UploadFile = File(...), user: dict = Depends(get_current_user)
+) -> dict:
+    """
+    Envia a logo do canal, que substitui a marca do ClipRadar nos clipes.
+
+    Exclusivo do plano Studio. Converte pra PNG com transparência: o
+    FFmpeg precisa de canal alfa pra sobrepor sem fundo quadrado.
+    """
+    plan = get_plan(user.get("plan"))
+    if not plan.brand_kit:
+        raise HTTPException(
+            402, "O Brand Kit faz parte do plano Studio. Assine pra usar sua própria logo."
+        )
+
+    content = await file.read(MAX_LOGO_BYTES + 1)
+    if len(content) > MAX_LOGO_BYTES:
+        raise HTTPException(413, "A logo precisa ter no máximo 3 MB.")
+
+    try:
+        from PIL import Image
+        import io
+
+        image = Image.open(io.BytesIO(content))
+        image = image.convert("RGBA")
+        # Limita o tamanho: logo gigante vira marca gigante no clipe.
+        image.thumbnail((1000, 1000))
+        image.save(BRAND_KIT_DIR / f"{user['storage_key']}.png")
+    except Exception:
+        raise HTTPException(400, "Não consegui ler essa imagem. Use PNG, JPG ou WEBP.")
+
+    log_event(stage="brand_kit", operation="upload", user_id=user["id"])
+    return {"ok": True}
+
+
+@app.delete("/api/brand-kit")
+def remove_brand_kit(user: dict = Depends(get_current_user)) -> dict:
+    """Remove a logo — os clipes voltam a sair sem marca (planos pagos)."""
+    path = BRAND_KIT_DIR / f"{user['storage_key']}.png"
+    if path.exists():
+        path.unlink()
+    return {"ok": True}
 
 
 @app.get("/api/plans")
@@ -576,6 +640,12 @@ def _run_job(
 ) -> None:
     storage_key = user["storage_key"]
     video_id = persistence.find_video_id(user, video_path)
+    # Marca d'água: obrigatória no grátis, e no Studio a logo do canal
+    # substitui a do ClipRadar quando enviada.
+    plan = get_plan(user.get("plan"))
+    brand_logo = brand_kit_path(user)
+    use_watermark = plan.watermark or brand_logo is not None
+    watermark_file = str(brand_logo) if brand_logo else None
     log_event(stage="job_iniciado", job_id=job_id, video_id=video_id,
               user_id=user["id"], operation=mode)
     try:
@@ -600,6 +670,7 @@ def _run_job(
 
         if mode == "separate":
             clips = export_separate_clips(
+                watermark=use_watermark, watermark_path=watermark_file,
                 analysis_path=analysis_path, platform=platform, orientation=orientation,
                 burn_captions=burn_captions, subtitle_style=subtitle_style,
                 dynamic_zoom=True, trim_dead_air=False, auto_face_crop=True,
@@ -626,6 +697,7 @@ def _run_job(
             )
         else:
             final_video, thumbnail, edit_plan, duration = run_montage(
+                watermark=use_watermark, watermark_path=watermark_file,
                 analysis_path=analysis_path, auto=True, platform=platform, orientation=orientation,
                 burn_captions=burn_captions, subtitle_style=subtitle_style,
                 dynamic_zoom=True, trim_dead_air=False, auto_face_crop=True,
@@ -664,7 +736,8 @@ def generate(req: GenerateRequest, user: dict = Depends(get_current_user)) -> di
     video_path = _resolve_vod_path(req.video_name, user["storage_key"])
     _enforce_quota(user, video_path)
 
-    if not _try_acquire_job_slot():
+    plan = get_plan(user.get("plan"))
+    if not _try_acquire_job_slot(priority=plan.priority_queue):
         raise HTTPException(429, f"Já tem {MAX_CONCURRENT_JOBS} vídeo(s) sendo processado(s). Tente depois.")
 
     job_id = str(uuid.uuid4())
@@ -731,7 +804,8 @@ def start_analyze(req: AnalyzeRequest, user: dict = Depends(get_current_user)) -
     video_path = _resolve_vod_path(req.video_name, user["storage_key"])
     _enforce_quota(user, video_path)
 
-    if not _try_acquire_job_slot():
+    plan = get_plan(user.get("plan"))
+    if not _try_acquire_job_slot(priority=plan.priority_queue):
         raise HTTPException(429, f"Já tem {MAX_CONCURRENT_JOBS} vídeo(s) sendo processado(s). Tente depois.")
 
     job_id = str(uuid.uuid4())

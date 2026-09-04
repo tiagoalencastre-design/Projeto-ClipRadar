@@ -164,8 +164,10 @@
     .hero-actions { flex-direction: column; }
     .header-actions .btn-secondary { display: none; }
   }
-  .pricing-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
-    gap:20px; max-width:760px; margin:0 auto; }
+  .pricing-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr));
+    gap:18px; max-width:1000px; margin:0 auto; align-items:start; }
+  .price-card .tag { display:inline-block; font-size:0.7rem; padding:3px 10px; border-radius:999px;
+    background:var(--accent-lime-soft); color:var(--accent-lime); margin-bottom:10px; }
   .price-card { background:var(--bg-panel); border:1px solid var(--border-subtle);
     border-radius:var(--radius-lg); padding:28px; }
   .price-card.featured { border-color:rgba(124,252,60,0.45); }
@@ -340,8 +342,11 @@
       const grid = document.getElementById('pricingGrid');
       grid.innerHTML = data.plans.map(p => {
         const pro = p.id === 'pro';
+        const studio = p.id === 'studio';
+        const paid = pro || studio;
         return `
         <div class="price-card ${pro ? 'featured' : ''}">
+          ${pro ? '<span class="tag">Mais escolhido</span>' : ''}
           <h3>${p.name}</h3>
           <div class="amount">${p.price.formatted}</div>
           <div class="period">${pro ? 'por mês' : 'para sempre'}</div>
@@ -350,10 +355,12 @@
             <li>Clips guardados por <strong>${p.retention_days} dias</strong></li>
             <li>${p.watermark ? 'Com marca d\'água' : '<strong>Sem marca d\'água</strong>'}</li>
             <li>${p.ai_extras_included ? '<strong>Título e thumbnail por IA</strong>' : 'Título e thumbnail por IA à parte'}</li>
+            ${p.priority_queue ? '<li><strong>Fila prioritária</strong></li>' : ''}
+            ${p.brand_kit ? '<li><strong>Brand Kit — sua logo no clip</strong></li>' : ''}
           </ul>
           <a class="btn ${pro ? 'btn-primary' : 'btn-secondary'}" href="/login?signup=1"
              style="width:100%;justify-content:center">
-            ${pro ? 'Assinar' : 'Começar grátis'}
+            ${paid ? 'Assinar' : 'Começar grátis'}
           </a>
         </div>`;
       }).join('');

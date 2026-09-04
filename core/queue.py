@@ -28,8 +28,13 @@ class JobQueue(ABC):
     name: str = "base"
 
     @abstractmethod
-    def submit(self, func: Callable, *args, **kwargs) -> bool:
-        """Coloca o trabalho pra rodar. True se aceitou."""
+    def submit(self, func: Callable, *args, priority: bool = False, **kwargs) -> bool:
+        """
+        Coloca o trabalho pra rodar. True se aceitou.
+
+        priority=True (plano Studio) reserva uma vaga extra além do limite
+        normal — quem paga mais não fica esperando atrás de quem não paga.
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -53,8 +58,12 @@ class ThreadQueue(JobQueue):
 
     name = "thread"
 
-    def __init__(self, max_workers: int = 2):
+    def __init__(self, max_workers: int = 2, priority_slots: int = 1):
         self._max_workers = max_workers
+        # Vagas reservadas pro plano Studio. Existem ALÉM do limite normal:
+        # assim um assinante nunca fica preso atrás de dois usuários grátis.
+        # Mantido baixo de propósito — cada vaga a mais é CPU disputada.
+        self._priority_slots = priority_slots
         self._lock = threading.Lock()
         self._active = 0
 
@@ -62,13 +71,16 @@ class ThreadQueue(JobQueue):
         with self._lock:
             return self._active
 
-    def has_capacity(self) -> bool:
+    def has_capacity(self, priority: bool = False) -> bool:
         with self._lock:
-            return self._active < self._max_workers
+            return self._active < self._limit_for(priority)
 
-    def _acquire(self) -> bool:
+    def _limit_for(self, priority: bool) -> int:
+        return self._max_workers + (self._priority_slots if priority else 0)
+
+    def _acquire(self, priority: bool = False) -> bool:
         with self._lock:
-            if self._active >= self._max_workers:
+            if self._active >= self._limit_for(priority):
                 return False
             self._active += 1
             return True
@@ -77,8 +89,8 @@ class ThreadQueue(JobQueue):
         with self._lock:
             self._active = max(0, self._active - 1)
 
-    def submit(self, func: Callable, *args, **kwargs) -> bool:
-        if not self._acquire():
+    def submit(self, func: Callable, *args, priority: bool = False, **kwargs) -> bool:
+        if not self._acquire(priority):
             return False
 
         def _wrapped():
@@ -108,7 +120,10 @@ def get_queue() -> JobQueue:
                     f"[ClipRadar] Fila '{config.queue.backend}' ainda não existe. "
                     f"Usando 'thread'."
                 )
-            _queue_instance = ThreadQueue(max_workers=config.queue.max_workers)
+            _queue_instance = ThreadQueue(
+                max_workers=config.queue.max_workers,
+                priority_slots=getattr(config.queue, "priority_slots", 1),
+            )
         return _queue_instance
 
 

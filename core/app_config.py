@@ -154,6 +154,8 @@ class QueueConfig:
     """
     backend: str = "thread"         # "thread" | "redis" (futuro)
     max_workers: int = 2
+    # Vagas extras reservadas ao plano Studio (fila prioritária).
+    priority_slots: int = 1
 
 
 @dataclass(frozen=True)

@@ -45,6 +45,7 @@ class TestAllUrlsStillRegistered(unittest.TestCase):
         # --- Biblioteca de clips ---
         "/api/clips",
         "/api/plans",
+        "/api/brand-kit",
         "/api/usage",
         "/api/clips/feedback",
         "/api/clips/feedback/summary",

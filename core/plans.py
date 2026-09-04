@@ -28,6 +28,7 @@ from datetime import datetime, timedelta, timezone
 
 FREE = "free"
 PRO = "pro"
+STUDIO = "studio"
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,8 @@ class Plan:
     retention_days: int
     watermark: bool
     ai_extras_included: bool      # título e thumbnail por IA
+    priority_queue: bool = False  # fura a fila quando há vídeos na frente
+    brand_kit: bool = False       # troca a marca do ClipRadar pela do canal
     prices: dict[str, RegionalPrice] = field(default_factory=dict)
 
     def price_for(self, region: str) -> RegionalPrice:
@@ -65,6 +68,13 @@ class Plan:
 #
 # Comparação: OpusClip Starter $15, Pro $29. Eklipse Premium $24,99.
 # Ficamos abaixo de todos, em qualquer região.
+_STUDIO_PRICES = {
+    "GB": RegionalPrice("GBP", "£", 24.99),
+    "US": RegionalPrice("USD", "$", 29.99),
+    "EU": RegionalPrice("EUR", "€", 27.99),
+    "BR": RegionalPrice("BRL", "R$", 99.90),
+}
+
 _PRO_PRICES = {
     "GB": RegionalPrice("GBP", "£", 10.99),
     "US": RegionalPrice("USD", "$", 13.99),
@@ -95,6 +105,21 @@ PLANS: dict[str, Plan] = {
         watermark=False,
         ai_extras_included=True,
         prices=_PRO_PRICES,
+    ),
+    STUDIO: Plan(
+        id=STUDIO,
+        name="Studio",
+        monthly_minutes=1200,
+        retention_days=90,      # deixa de ser ferramenta e vira arquivo do canal
+        watermark=False,
+        ai_extras_included=True,
+        # Fura a fila quando há outros vídeos processando. É o diferencial
+        # mais valioso pra quem posta todo dia — e o mais barato de entregar,
+        # porque a fila já existe.
+        priority_queue=True,
+        # Marca do canal no lugar da marca do ClipRadar.
+        brand_kit=True,
+        prices=_STUDIO_PRICES,
     ),
 }
 
@@ -195,6 +220,8 @@ class UsageStatus:
             "retention_days": self.plan.retention_days,
             "watermark": self.plan.watermark,
             "ai_extras_included": self.plan.ai_extras_included,
+            "priority_queue": self.plan.priority_queue,
+            "brand_kit": self.plan.brand_kit,
             "region": self.region,
             "price": {
                 "currency": price.currency,
@@ -216,6 +243,8 @@ def describe_plans(region: str = "US") -> list[dict]:
             "retention_days": plan.retention_days,
             "watermark": plan.watermark,
             "ai_extras_included": plan.ai_extras_included,
+            "priority_queue": plan.priority_queue,
+            "brand_kit": plan.brand_kit,
             "price": {
                 "currency": price.currency,
                 "amount": price.monthly,
