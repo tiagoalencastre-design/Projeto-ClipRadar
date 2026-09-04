@@ -100,7 +100,12 @@ EDIT_PRESETS = {
         "default_subtitle_style": "bold_yellow",
     },
 }
-DEFAULT_PRESET = "clean"
+# "impact" é o padrão: liga zoom pontual e destaque de palavra na legenda.
+# O "clean" desliga os dois — o que em short-form é sempre pior, e ninguém
+# tinha como saber a diferença sem gerar os dois e comparar. Ele continua
+# existindo aqui só para não quebrar chamadas antigas da API, mas saiu da
+# interface.
+DEFAULT_PRESET = "impact"
 
 # Opções de layout do recorte vertical (tela de revisão) — "gameplay_full" é
 # o corte central simples (comportamento antigo), "facecam_focus" segue o
@@ -407,6 +412,52 @@ def _build_facecam_stack_filter(bbox: tuple[float, float, float, float], play_re
     )
 
 
+WATERMARK_PATH = Path(__file__).resolve().parent.parent / "web" / "assets" / "watermark.png"
+
+
+def build_watermark_filter(
+    play_res: tuple[int, int], opacity: float = 0.75, margin: int = 34
+) -> str | None:
+    """
+    Marca d'água do plano grátis, no canto inferior direito.
+
+    DISCRETA DE PROPÓSITO. Marca agressiva faz a pessoa não postar o clipe —
+    e aí ela não divulga o produto nem vira cliente. O objetivo é ser
+    reconhecível, não atrapalhar.
+
+    Devolve None se o arquivo da marca não existir: é melhor entregar o
+    clipe sem marca do que falhar a renderização inteira por causa dela.
+    """
+    if not WATERMARK_PATH.exists():
+        return None
+
+    width = max(int(play_res[0] * 0.30), 120)   # ~30% da largura do vídeo
+    return (
+        f"movie='{WATERMARK_PATH.as_posix()}'[__wm];"
+        f"[__wm]scale={width}:-1,format=rgba,"
+        f"colorchannelmixer=aa={opacity}[__wms];"
+        f"[__wms]null[__wmf]"
+    )
+
+
+def append_watermark(filter_complex: str, play_res: tuple[int, int]) -> str:
+    """
+    Encaixa a marca no fim de um filter_complex que termina em [__stacked].
+
+    Feito como etapa separada pra funcionar com QUALQUER layout — corte
+    central, facecam empilhado ou fundo borrado.
+    """
+    watermark = build_watermark_filter(play_res)
+    if not watermark:
+        return filter_complex
+
+    base = filter_complex.replace("[__stacked]", "[__prewm]")
+    return (
+        f"{base};{watermark};"
+        f"[__prewm][__wmf]overlay=W-w-34:H-h-34[__stacked]"
+    )
+
+
 def _build_blur_background_filter(play_res: tuple[int, int], blur_strength: int = 22) -> str:
     """
     Layout "blur_background": vídeo inteiro no centro, fundo borrado.
@@ -456,8 +507,12 @@ def _cut_single_interval(
     edit_plan: dict | None = None,
     preset: str = DEFAULT_PRESET,
     layout: str | None = None,
+    watermark: bool = False,
 ) -> None:
     """
+    watermark=True carimba a marca do ClipRadar (plano grátis). Default
+    False pra não mudar o comportamento de quem já chamava esta função.
+
     layout: None mantém o comportamento antigo (usa auto_face_crop como
     antes) — só quando explicitamente "gameplay_facecam" ou "facecam_focus"
     é que o novo sistema de layout assume o controle. Isso preserva 100% de
@@ -477,6 +532,15 @@ def _cut_single_interval(
             facecam_complex = _build_facecam_stack_filter(bbox, play_res)
         # se não achou rosto nenhum, cai pro corte simples abaixo (gameplay_full)
         # — nunca inventamos uma "webcam" que não existe
+
+    # Marca d'água do plano grátis. Aplicada como etapa separada pra
+    # funcionar com QUALQUER layout. Se não houver filter_complex (layouts
+    # simples), criamos um só pra poder sobrepor a marca.
+    if watermark and facecam_complex is None:
+        base_filter = VERTICAL_FILTER if orientation == "vertical" else HORIZONTAL_FILTER
+        facecam_complex = f"[0:v]{base_filter}[__stacked]"
+    if watermark and facecam_complex:
+        facecam_complex = append_watermark(facecam_complex, play_res)
 
     vf_parts = None
     filter_chain = None

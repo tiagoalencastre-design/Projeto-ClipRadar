@@ -21,6 +21,7 @@ import os
 import re
 import sys
 import threading
+import subprocess
 import time
 import traceback
 import uuid
@@ -45,9 +46,17 @@ from core.job_store import PersistentJobStore
 from core.dependencies import APP_BASE_URL, SESSION_COOKIE_NAME, get_current_user
 from core.routers import auth as auth_router
 from core.routers import system as system_router
-from core import persistence
+from core import persistence, retention
 from core.observability import StageTimer, log_event
-from core.repositories import VideoRepository
+from datetime import datetime, timezone
+
+from core.plans import (
+    UsageStatus, describe_plans, days_until_expiry, get_plan, region_for_country,
+)
+from core.repositories import (
+    REJECTION_REASONS, ClipRepository, FeedbackRepository, UsageRepository,
+    VideoRepository,
+)
 
 VODS_DIR = Path("data/vods")
 CLIPS_DIR = Path("data/clips")
@@ -67,6 +76,10 @@ init_db()  # cria as tabelas de usuário/sessão se ainda não existirem
 # de sumirem da tela, ficam marcados como 'interrupted' — o usuário vê o
 # que aconteceu.
 persistence.mark_orphan_jobs_as_interrupted()
+
+# Limpeza dos clipes vencidos (7 dias no grátis, 30 no Pro). Roda em thread
+# de fundo, a primeira vez 5 minutos após o boot pra não atrasar a subida.
+retention.start_scheduler(CLIPS_DIR)
 
 # Fase 1: mostra claramente em que modo o servidor está subindo — sem isso,
 # é fácil esquecer se IA está de fato bloqueada ou não nesta sessão.
@@ -270,6 +283,186 @@ def list_videos(user: dict = Depends(get_current_user)) -> dict:
     }
 
 
+class ClipFeedbackRequest(BaseModel):
+    verdict: Literal["approved", "rejected"]
+    clip_id: str | None = None
+    job_id: str | None = None
+    reason: str | None = None
+    score: float | None = None
+    category: str | None = None
+    candidate_type: str | None = None
+    duration_seconds: float | None = None
+    signals: dict | None = None
+
+
+def _video_minutes(video_path: Path) -> float:
+    """Duração do vídeo em minutos, via ffprobe. 0.0 se não der pra ler —
+    nesse caso não bloqueamos: melhor deixar passar do que recusar um vídeo
+    válido por falha nossa."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(video_path)],
+            capture_output=True, text=True, timeout=30,
+        )
+        return float(out.stdout.strip()) / 60.0
+    except (subprocess.SubprocessError, ValueError, OSError):
+        return 0.0
+
+
+def _enforce_quota(user: dict, video_path: Path) -> None:
+    """
+    Recusa ANTES de processar quando o vídeo não cabe no plano.
+
+    Descobrir que a cota acabou depois de esperar 20 minutos de
+    processamento seria péssimo — por isso a checagem vem primeiro.
+    """
+    minutes = _video_minutes(video_path)
+    if minutes <= 0:
+        return   # não conseguimos medir: não bloqueia
+
+    allowed, message = _usage_status(user).can_process(minutes)
+    if not allowed:
+        raise HTTPException(402, message)
+
+
+def _usage_status(user: dict) -> UsageStatus:
+    """Quanto o usuário já processou neste mês, e o que o plano dele permite."""
+    return UsageStatus(
+        plan=get_plan(user.get("plan")),
+        minutes_used=UsageRepository.minutes_this_month(user["id"]),
+        region=user.get("region") or "US",
+    )
+
+
+@app.get("/api/plans")
+def list_plans(country: str | None = None) -> dict:
+    """
+    Tabela de planos, já na moeda da região.
+
+    Público de propósito: a landing page precisa mostrar preço sem login.
+    O preço é definido por poder de compra local, não por conversão do
+    dólar — R$ 34,90 não é "$9,90 convertido".
+    """
+    region = region_for_country(country)
+    return {"region": region, "plans": describe_plans(region)}
+
+
+@app.get("/api/usage")
+def current_usage(user: dict = Depends(get_current_user)) -> dict:
+    """Consumo do mês e limites do plano atual."""
+    return _usage_status(user).as_dict()
+
+
+@app.post("/api/clips/feedback")
+def clip_feedback(req: ClipFeedbackRequest, user: dict = Depends(get_current_user)) -> dict:
+    """
+    Registra se o criador aprovaria ou rejeitaria um clipe.
+
+    POR QUE ISTO EXISTE: os botões de aprovar/rejeitar já existiam na tela,
+    mas só mudavam a cor. O dado se perdia. Cada voto aqui guarda também os
+    SINAIS que o sistema usou pra escolher aquele momento — assim dá pra
+    comparar o que o algoritmo achou com o que a pessoa achou, e ajustar os
+    pesos com base em resultado real.
+
+    Motivo de rejeição é opcional e vem de uma lista fechada: texto livre
+    quase ninguém preenche, e o que se preenche não dá pra agregar.
+    """
+    if req.reason and req.reason not in REJECTION_REASONS:
+        raise HTTPException(400, f"Motivo inválido. Use um de: {', '.join(REJECTION_REASONS)}")
+
+    feedback_id = FeedbackRepository.record(
+        user_id=user["id"], verdict=req.verdict, job_id=req.job_id,
+        clip_identifier=req.clip_id, reason=req.reason, score=req.score,
+        category=req.category, candidate_type=req.candidate_type,
+        duration_seconds=req.duration_seconds,
+        signals=json.dumps(req.signals, ensure_ascii=False) if req.signals else None,
+    )
+    log_event(
+        stage="feedback_do_clipe", job_id=req.job_id, user_id=user["id"],
+        operation=req.verdict, reason=req.reason,
+    )
+    return {"ok": feedback_id is not None, "id": feedback_id}
+
+
+@app.get("/api/clips/feedback/summary")
+def clip_feedback_summary(user: dict = Depends(get_current_user)) -> dict:
+    """
+    Quantos dos clipes gerados o criador realmente aprovaria, e por que
+    rejeitou os outros. É a métrica de qualidade do produto.
+    """
+    return {
+        "summary": FeedbackRepository.summary(user["id"]),
+        "reasons": REJECTION_REASONS,
+    }
+
+
+@app.get("/api/clips")
+def list_clips(user: dict = Depends(get_current_user)) -> dict:
+    """
+    Biblioteca de clipes — tudo que o usuário já gerou, sobrevive a restart.
+
+    FONTE DUPLA, de propósito:
+      - o BANCO tem os metadados (nota, duração, modo, data);
+      - o DISCO é a verdade sobre o arquivo existir.
+
+    Clipes gerados antes da persistência existir só estão no disco. Em vez
+    de escondê-los, eles aparecem sem metadados. E um registro do banco cujo
+    arquivo foi apagado à mão NÃO é listado — vídeo fantasma que não abre é
+    pior que nenhum vídeo.
+    """
+    clips_dir = _user_clips_dir(user["storage_key"])
+
+    known = {}
+    for clip in ClipRepository.list_for_user(user["id"]):
+        if not clip.storage_path:
+            continue
+        known[Path(clip.storage_path).name] = clip
+
+    items = []
+    for path in sorted(clips_dir.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True):
+        record = known.get(path.name)
+        thumbnail = path.with_suffix(".jpg")
+        items.append({
+            "filename": path.name,
+            "video": _to_url(str(path)),
+            "thumbnail": _to_url(str(thumbnail)) if thumbnail.exists() else None,
+            "size_bytes": path.stat().st_size,
+            "created_at": (
+                record.created_at if record
+                else datetime.fromtimestamp(path.stat().st_mtime).isoformat()
+            ),
+            "clip_id": record.clip_identifier if record else None,
+            "score": record.score if record else None,
+            "duration_seconds": record.duration_seconds if record else None,
+            "mode": record.mode if record else None,
+            "in_database": record is not None,
+            # Avisar antes de apagar. Sumir sem aviso é o que gera raiva —
+            # e foi exatamente o susto que motivou a Biblioteca de Clips.
+            "expires_in_days": _expiry_days(record, path, user),
+        })
+
+    return {
+        "clips": items,
+        "total": len(items),
+        "retention_days": get_plan(user.get("plan")).retention_days,
+    }
+
+
+def _expiry_days(record, path: Path, user: dict) -> int:
+    """Dias até o clipe deixar de ficar disponível, pelo plano do usuário."""
+    try:
+        created = (
+            datetime.fromisoformat(record.created_at) if record
+            else datetime.fromtimestamp(path.stat().st_mtime)
+        )
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        return days_until_expiry(created, user.get("plan"))
+    except (ValueError, OSError):
+        return get_plan(user.get("plan")).retention_days
+
+
 @app.get("/api/history")
 def user_history(user: dict = Depends(get_current_user)) -> dict:
     """
@@ -469,6 +662,7 @@ def _run_job(
 def generate(req: GenerateRequest, user: dict = Depends(get_current_user)) -> dict:
     _cleanup_old_jobs()
     video_path = _resolve_vod_path(req.video_name, user["storage_key"])
+    _enforce_quota(user, video_path)
 
     if not _try_acquire_job_slot():
         raise HTTPException(429, f"Já tem {MAX_CONCURRENT_JOBS} vídeo(s) sendo processado(s). Tente depois.")
@@ -535,6 +729,7 @@ def _run_analyze_job(job_id: str, video_path: Path, user: dict) -> None:
 def start_analyze(req: AnalyzeRequest, user: dict = Depends(get_current_user)) -> dict:
     _cleanup_old_jobs()
     video_path = _resolve_vod_path(req.video_name, user["storage_key"])
+    _enforce_quota(user, video_path)
 
     if not _try_acquire_job_slot():
         raise HTTPException(429, f"Já tem {MAX_CONCURRENT_JOBS} vídeo(s) sendo processado(s). Tente depois.")

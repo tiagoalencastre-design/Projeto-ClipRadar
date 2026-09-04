@@ -42,6 +42,12 @@ class TestAllUrlsStillRegistered(unittest.TestCase):
         "/api/analyze", "/api/analyze-status/{job_id}", "/api/render-clip",
         # --- Fase 1 (confiabilidade): histórico persistido ---
         "/api/history",
+        # --- Biblioteca de clips ---
+        "/api/clips",
+        "/api/plans",
+        "/api/usage",
+        "/api/clips/feedback",
+        "/api/clips/feedback/summary",
     }
 
     def _paths(self) -> set:

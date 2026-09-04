@@ -126,6 +126,42 @@ def init_db() -> None:
         """)
 
         conn.execute("""
+            CREATE TABLE IF NOT EXISTS plan_migration_marker (id INTEGER PRIMARY KEY)
+        """)
+
+        # Colunas de plano nos usuários existentes.
+        #
+        # Feito com ALTER TABLE em vez de recriar a tabela: usuários já
+        # cadastrados (e suas senhas) não podem ser perdidos. É idempotente —
+        # rodar init_db() de novo não duplica nada.
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+        if "plan" not in existing:
+            conn.execute("ALTER TABLE users ADD COLUMN plan TEXT NOT NULL DEFAULT 'free'")
+        if "region" not in existing:
+            conn.execute("ALTER TABLE users ADD COLUMN region TEXT NOT NULL DEFAULT 'US'")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS clip_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                job_id TEXT,
+                clip_identifier TEXT,
+                verdict TEXT NOT NULL,           -- approved | rejected
+                reason TEXT,                     -- só quando rejeitado
+                score REAL,                      -- a nota que o sistema deu
+                category TEXT,
+                candidate_type TEXT,
+                duration_seconds REAL,
+                signals TEXT,                    -- JSON do breakdown, pra
+                                                 -- comparar depois o que o
+                                                 -- sistema achou com o que a
+                                                 -- pessoa achou
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            )
+        """)
+
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS usage_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,

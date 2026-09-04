@@ -329,6 +329,19 @@
     .content { padding: 20px; }
     .options-row { grid-template-columns: 1fr; }
   }
+  .expiry-badge { display:inline-block; font-size:0.7rem; padding:3px 8px; border-radius:999px;
+    background:rgba(255,255,255,0.06); color:var(--text-muted); margin-bottom:8px; }
+  .expiry-badge.soon { background:rgba(241,101,101,0.14); color:var(--accent-danger); }
+  .usage-bar { height:6px; border-radius:999px; background:rgba(255,255,255,0.08); overflow:hidden; margin:8px 0 6px; }
+  .usage-bar span { display:block; height:100%; background:var(--accent-lime); transition:width .3s; }
+  .usage-bar.full span { background:var(--accent-danger); }
+  .library-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:16px; }
+  .library-item { background:var(--bg-void); border:1px solid var(--border-subtle); border-radius:var(--radius-md); overflow:hidden; }
+  .library-item video { width:100%; aspect-ratio:9/16; object-fit:cover; background:#000; display:block; }
+  .library-meta { padding:10px 12px; }
+  .library-meta .name { font-size:0.78rem; color:var(--text-muted); word-break:break-all; margin-bottom:8px; }
+  .library-actions { display:flex; gap:8px; }
+  .library-actions .btn { flex:1; font-size:0.78rem; padding:7px 10px; }
 </style>
 </head>
 <body>
@@ -436,11 +449,6 @@
                 <div class="tab" data-value="shorts">Shorts</div>
               </div>
             </div>
-            <div>
-              <span class="field-label" id="labelPreset"></span>
-              <div class="tabs" id="presetTabs">
-                <div class="tab active" data-value="clean" data-i18n="preset_clean"></div>
-                <div class="tab" data-value="impact" data-i18n="preset_impact"></div>
               </div>
             </div>
             <div>
@@ -471,6 +479,15 @@
       </section>
 
       <!-- ===== PROCESSAMENTO ===== -->
+      <!-- ===== BIBLIOTECA DE CLIPS ===== -->
+      <section class="view" id="viewLibrary">
+        <div class="card">
+          <h2 id="libraryTitle" style="margin-bottom:6px"></h2>
+          <p class="muted" id="librarySubtitle" style="margin-bottom:18px"></p>
+          <div id="libraryGrid" class="library-grid"></div>
+        </div>
+      </section>
+
       <section class="view" id="viewProcessing">
         <div class="processing-wrap">
           <div class="processing-title">
@@ -588,6 +605,14 @@ const translations = {
     label_layout: "Layout",
     layout_gameplay_full: "Gameplay cheio", layout_gameplay_facecam: "Gameplay + facecam", layout_facecam_focus: "Facecam em foco",
     layout_blur_background: "Fundo borrado",
+    library_title: "Biblioteca de clips", library_subtitle: "Tudo que você já gerou fica aqui.",
+    library_empty: "Você ainda não gerou nenhum clip. Crie um projeto pra começar.",
+    library_download: "Baixar", library_open: "Abrir",
+    expires_today: "Expira hoje", expires_in: "Expira em", expires_days: "dias",
+    usage_title: "Uso do mês", usage_of: "de", usage_minutes: "min",
+    usage_plan_free: "Plano Grátis", usage_plan_pro: "Plano Pro",
+    usage_upgrade: "Ver planos", usage_exhausted: "Seus minutos do mês acabaram.",
+    library_count: "clip(s) salvos",
     review_render_btn: "Renderizar", review_rendering: "Renderizando...",
     dirty_banner: "Alterações ainda não renderizadas",
     review_download: "Baixar clip",
@@ -615,6 +640,11 @@ const translations = {
     action_download_thumb: "Baixar thumbnail",
     action_save_draft: "Salvar como rascunho",
     action_approve: "Aprovar", action_reject: "Rejeitar", action_edit: "Editar",
+    reason_question: "O que ficou ruim?", reason_skip: "Pular",
+    reason_bad_start: "Começou errado", reason_bad_end: "Terminou errado",
+    reason_boring: "Momento chato", reason_no_context: "Sem contexto",
+    reason_bad_framing: "Enquadramento", reason_bad_captions: "Legenda errada",
+    reason_duplicate: "Repetido", reason_other: "Outro",
     label_transcript: "Transcrição (clique numa palavra pra mover o preview)",
     transcript_empty: "Sem transcrição disponível pra esse clip.",
     label_trim: "Início / Fim do clip",
@@ -680,6 +710,14 @@ const translations = {
     label_layout: "Layout",
     layout_gameplay_full: "Full gameplay", layout_gameplay_facecam: "Gameplay + facecam", layout_facecam_focus: "Facecam focus",
     layout_blur_background: "Blurred background",
+    library_title: "Clip library", library_subtitle: "Everything you've generated lives here.",
+    library_empty: "You haven't generated any clips yet. Create a project to start.",
+    library_download: "Download", library_open: "Open",
+    expires_today: "Expires today", expires_in: "Expires in", expires_days: "days",
+    usage_title: "Monthly usage", usage_of: "of", usage_minutes: "min",
+    usage_plan_free: "Free plan", usage_plan_pro: "Pro plan",
+    usage_upgrade: "See plans", usage_exhausted: "You've used all your minutes this month.",
+    library_count: "saved clip(s)",
     review_render_btn: "Render", review_rendering: "Rendering...",
     dirty_banner: "Changes not rendered yet",
     review_download: "Download clip",
@@ -707,6 +745,11 @@ const translations = {
     action_download_thumb: "Download thumbnail",
     action_save_draft: "Save as draft",
     action_approve: "Approve", action_reject: "Reject", action_edit: "Edit",
+    reason_question: "What went wrong?", reason_skip: "Skip",
+    reason_bad_start: "Bad start", reason_bad_end: "Bad ending",
+    reason_boring: "Boring moment", reason_no_context: "No context",
+    reason_bad_framing: "Framing", reason_bad_captions: "Wrong captions",
+    reason_duplicate: "Duplicate", reason_other: "Other",
     action_saved_draft: "Saved as draft ✓",
     action_regenerate: "Apply & regenerate",
     tag_clutch: "Clutch", tag_reaction: "Reaction", tag_funny: "Funny", tag_strong_quote: "Strong quote",
@@ -757,6 +800,14 @@ const translations = {
     label_layout: "Diseño",
     layout_gameplay_full: "Gameplay completo", layout_gameplay_facecam: "Gameplay + facecam", layout_facecam_focus: "Facecam en foco",
     layout_blur_background: "Fondo desenfocado",
+    library_title: "Biblioteca de clips", library_subtitle: "Todo lo que has generado está aquí.",
+    library_empty: "Aún no has generado ningún clip. Crea un proyecto para empezar.",
+    library_download: "Descargar", library_open: "Abrir",
+    expires_today: "Expira hoy", expires_in: "Expira en", expires_days: "días",
+    usage_title: "Uso del mes", usage_of: "de", usage_minutes: "min",
+    usage_plan_free: "Plan Gratis", usage_plan_pro: "Plan Pro",
+    usage_upgrade: "Ver planes", usage_exhausted: "Se acabaron tus minutos del mes.",
+    library_count: "clip(s) guardados",
     review_render_btn: "Renderizar", review_rendering: "Renderizando...",
     dirty_banner: "Cambios aún no renderizados",
     review_download: "Descargar clip",
@@ -784,6 +835,11 @@ const translations = {
     action_download_thumb: "Descargar thumbnail",
     action_save_draft: "Guardar como borrador",
     action_approve: "Aprobar", action_reject: "Rechazar", action_edit: "Editar",
+    reason_question: "¿Qué salió mal?", reason_skip: "Saltar",
+    reason_bad_start: "Mal inicio", reason_bad_end: "Mal final",
+    reason_boring: "Momento aburrido", reason_no_context: "Sin contexto",
+    reason_bad_framing: "Encuadre", reason_bad_captions: "Subtítulos",
+    reason_duplicate: "Repetido", reason_other: "Otro",
     action_saved_draft: "Guardado como borrador ✓",
     action_regenerate: "Aplicar y regenerar",
     tag_clutch: "Clutch", tag_reaction: "Reacción", tag_funny: "Gracioso", tag_strong_quote: "Frase fuerte",
@@ -898,7 +954,9 @@ applyStaticTranslations();
 let selectedMode = 'montage';
 let selectedOrientation = 'vertical';
 let selectedPlatform = 'sem_preferencia';
-let selectedPreset = 'clean';
+// Sempre 'impact': liga zoom pontual e destaque de palavra. O 'clean'
+// desligava os dois, que em short-form é sempre pior.
+const selectedPreset = 'impact';
 let recentProjects = []; // histórico só desta sessão (sem back-end persistente)
 let currentClips = [];   // clips do resultado atualmente exibido
 let currentClipIndex = 0;
@@ -912,7 +970,6 @@ const els = {
   modeTabs: document.getElementById('modeTabs'),
   orientationTabs: document.getElementById('orientationTabs'),
   platformTabs: document.getElementById('platformTabs'),
-  presetTabs: document.getElementById('presetTabs'),
   subtitleStyleSelect: document.getElementById('subtitleStyleSelect'),
   captionsCheckbox: document.getElementById('captionsCheckbox'),
   generateBtn: document.getElementById('generateBtn'),
@@ -931,6 +988,7 @@ function setView(name) {
   document.getElementById('view' + name.charAt(0).toUpperCase() + name.slice(1)).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   if (name === 'home') document.getElementById('navProjects').classList.add('active');
+  if (name === 'library') document.getElementById('navLibrary').classList.add('active');
   els.sidebar.classList.remove('open');
 }
 
@@ -977,7 +1035,67 @@ document.getElementById('userSignOutItem').addEventListener('click', async () =>
 })();
 document.getElementById('navCreate').addEventListener('click', () => setView('home'));
 document.getElementById('navProjects').addEventListener('click', () => setView('home'));
-document.getElementById('navLibrary').addEventListener('click', () => setView('home'));
+loadUsage();
+document.getElementById('navLibrary').addEventListener('click', () => {
+  setView('library');
+  loadLibrary();
+});
+
+// Avisar ANTES de apagar. Sumir sem aviso é o que gera raiva de verdade.
+function expiryBadge(days) {
+  if (days === null || days === undefined) return '';
+  const soon = days <= 2;
+  const text = days <= 0 ? T.expires_today : `${T.expires_in} ${days} ${T.expires_days}`;
+  return `<div class="expiry-badge ${soon ? 'soon' : ''}">${text}</div>`;
+}
+
+// Consumo do mês, mostrado no topo. O usuário precisa saber onde está antes
+// de enviar um vídeo longo — não depois de esperar o processamento.
+async function loadUsage() {
+  const pill = document.getElementById('statusPill');
+  if (!pill) return;
+  try {
+    const res = await fetch('/api/usage');
+    if (!res.ok) return;
+    const u = await res.json();
+    const planLabel = u.plan === 'pro' ? T.usage_plan_pro : T.usage_plan_free;
+    pill.innerHTML = `${planLabel} · ${Math.round(u.minutes_left)} ${T.usage_minutes}`;
+    pill.title = `${T.usage_title}: ${Math.round(u.minutes_used)} ${T.usage_of} ${u.minutes_total} ${T.usage_minutes}`;
+    pill.classList.toggle('exhausted', u.exhausted);
+  } catch (e) { /* silencioso: não é crítico pro fluxo */ }
+}
+
+async function loadLibrary() {
+  const grid = document.getElementById('libraryGrid');
+  document.getElementById('libraryTitle').textContent = T.library_title;
+  grid.innerHTML = `<p class="muted">...</p>`;
+  try {
+    const res = await fetch('/api/clips');
+    if (!res.ok) throw new Error('falha ao carregar');
+    const data = await res.json();
+    document.getElementById('librarySubtitle').textContent =
+      data.total ? `${data.total} ${T.library_count}` : T.library_subtitle;
+
+    if (!data.clips.length) {
+      grid.innerHTML = `<p class="muted">${T.library_empty}</p>`;
+      return;
+    }
+    grid.innerHTML = data.clips.map(c => `
+      <div class="library-item">
+        <video src="${c.video}" ${c.thumbnail ? `poster="${c.thumbnail}"` : ''} controls preload="none"></video>
+        <div class="library-meta">
+          ${expiryBadge(c.expires_in_days)}
+          <div class="name">${c.filename}</div>
+          <div class="library-actions">
+            <a class="btn btn-secondary" href="${c.video}" download>${T.library_download}</a>
+            <a class="btn btn-ghost" href="${c.video}" target="_blank">${T.library_open}</a>
+          </div>
+        </div>
+      </div>`).join('');
+  } catch (e) {
+    grid.innerHTML = `<p class="muted">${T.library_empty}</p>`;
+  }
+}
 document.getElementById('backToHomeBtn').addEventListener('click', () => setView('home'));
 
 /* ---------- Tabs genéricas ---------- */
@@ -993,7 +1111,6 @@ function setupTabs(container, onSelect) {
 setupTabs(els.modeTabs, v => selectedMode = v);
 setupTabs(els.orientationTabs, v => selectedOrientation = v);
 setupTabs(els.platformTabs, v => selectedPlatform = v);
-setupTabs(els.presetTabs, v => selectedPreset = v);
 
 /* ---------- Fonte do vídeo: dropzone / link / pasta do servidor ---------- */
 const uploadDrop = document.getElementById('uploadDrop');
@@ -1135,7 +1252,11 @@ async function runGenerate(videoName) {
   }
 }
 
+// Guardado pra que o feedback de cada clipe saiba de qual processamento veio.
+let currentJobId = null;
+
 function pollJob(jobId) {
+  currentJobId = jobId;
   pollTimer = setInterval(async () => {
     try {
       const res = await fetch(`/api/status/${jobId}`);
@@ -1245,9 +1366,18 @@ function renderClipList() {
       const action = btn.dataset.action;
       const clip = currentClips[idx];
       if (action === 'approve') {
-        clip.reviewStatus = clip.reviewStatus === 'approved' ? 'pending' : 'approved';
+        const wasApproved = clip.reviewStatus === 'approved';
+        clip.reviewStatus = wasApproved ? 'pending' : 'approved';
+        if (!wasApproved) sendClipFeedback(clip, 'approved');
       } else if (action === 'reject') {
-        clip.reviewStatus = clip.reviewStatus === 'rejected' ? 'pending' : 'rejected';
+        const wasRejected = clip.reviewStatus === 'rejected';
+        clip.reviewStatus = wasRejected ? 'pending' : 'rejected';
+        if (!wasRejected) {
+          sendClipFeedback(clip, 'rejected');
+          renderClipList();
+          askRejectionReason(clip, idx);
+          return;
+        }
       } else if (action === 'edit') {
         selectClip(idx);
         setTimeout(() => document.getElementById('clipTitleInput')?.focus(), 50);
@@ -1256,6 +1386,63 @@ function renderClipList() {
       renderClipList();
     });
   });
+}
+
+// Envia o voto sem travar a interface: se a rede falhar, o usuário nem
+// percebe — o dado é útil, mas não é crítico pro fluxo dele.
+async function sendClipFeedback(clip, verdict, reason = null) {
+  try {
+    await fetch('/api/clips/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        verdict, reason,
+        clip_id: clip.clip_id || null,
+        job_id: currentJobId || null,
+        score: clip.score ?? null,
+        category: clip.category || null,
+        candidate_type: clip.candidate_type || null,
+        duration_seconds: clip.duration_seconds ?? null,
+        signals: clip.breakdown || null,
+      }),
+    });
+  } catch (e) { /* silencioso de propósito */ }
+}
+
+const REJECTION_REASONS = [
+  'bad_start', 'bad_end', 'boring', 'no_context',
+  'bad_framing', 'bad_captions', 'duplicate', 'other',
+];
+
+// Um clique, sem campo de texto. Texto livre quase ninguém preenche.
+function askRejectionReason(clip, idx) {
+  const existing = document.getElementById('reasonPrompt');
+  if (existing) existing.remove();
+
+  const box = document.createElement('div');
+  box.id = 'reasonPrompt';
+  box.className = 'card';
+  box.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:200;max-width:min(520px,92vw);box-shadow:0 12px 40px rgba(0,0,0,0.5)';
+  box.innerHTML = `
+    <div style="font-size:0.9rem;margin-bottom:12px">${T.reason_question}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      ${REJECTION_REASONS.map(r =>
+        `<button class="btn btn-secondary" data-reason="${r}" style="font-size:0.78rem;padding:6px 12px">${T['reason_' + r]}</button>`
+      ).join('')}
+      <button class="btn btn-ghost" data-reason="" style="font-size:0.78rem;padding:6px 12px">${T.reason_skip}</button>
+    </div>`;
+  document.body.appendChild(box);
+
+  box.querySelectorAll('button').forEach(b => {
+    b.addEventListener('click', () => {
+      const reason = b.dataset.reason;
+      if (reason) sendClipFeedback(clip, 'rejected', reason);
+      box.remove();
+    });
+  });
+
+  // Some sozinho: não pode virar obstáculo pra quem só quer seguir usando.
+  setTimeout(() => box.remove(), 12000);
 }
 
 function selectClip(idx) {
@@ -1289,7 +1476,7 @@ function renderClipPanel(clip) {
     </div>
     <div class="panel-group">
       <span class="field-label">${T.panel_layout}</span>
-      <div class="badge badge-muted">${selectedPreset === 'clean' ? T.preset_clean : T.preset_impact}</div>
+      <div class="badge badge-muted">${T.preset_impact}</div>
     </div>
     <div class="panel-group">
       <span class="field-label">${T.panel_subtitle}</span>
@@ -1363,7 +1550,7 @@ const reviewEls = {
 function defaultReviewState(candidate) {
   return {
     start: candidate.context_start_seconds, end: candidate.end_seconds, title: '',
-    orientation: 'vertical', platform: 'sem_preferencia', preset: 'clean', layout: 'gameplay_full',
+    orientation: 'vertical', platform: 'sem_preferencia', preset: 'impact', layout: 'gameplay_full',
     subtitleStyle: 'classic', burnCaptions: true, renderedSnapshot: null, result: null,
   };
 }
@@ -1550,11 +1737,6 @@ function renderReviewPanel(candidate, state) {
     </div>
     <div class="panel-group">
       <span class="field-label">${T.label_preset}</span>
-      <div class="tabs" id="reviewPresetTabs">
-        <div class="tab ${state.preset === 'clean' ? 'active' : ''}" data-value="clean">${T.preset_clean}</div>
-        <div class="tab ${state.preset === 'impact' ? 'active' : ''}" data-value="impact">${T.preset_impact}</div>
-        <div class="tab ${state.preset === 'streamer' ? 'active' : ''}" data-value="streamer">${T.preset_streamer}</div>
-      </div>
     </div>
     <div class="panel-group">
       <span class="field-label">${T.label_layout}</span>
@@ -1585,7 +1767,6 @@ function renderReviewPanel(candidate, state) {
   document.getElementById('reviewTitleInput').addEventListener('input', (e) => { state.title = e.target.value; });
   setupTabs(document.getElementById('reviewOrientationTabs'), v => { state.orientation = v; renderReviewPanel(candidate, state); });
   setupTabs(document.getElementById('reviewPlatformTabs'), v => { state.platform = v; renderReviewPanel(candidate, state); });
-  setupTabs(document.getElementById('reviewPresetTabs'), v => { state.preset = v; renderReviewPanel(candidate, state); });
   setupTabs(document.getElementById('reviewLayoutTabs'), v => { state.layout = v; renderReviewPanel(candidate, state); });
   document.getElementById('reviewSubtitleSelect').addEventListener('change', (e) => { state.subtitleStyle = e.target.value; renderReviewPanel(candidate, state); });
   document.getElementById('reviewCaptionsCheckbox').addEventListener('change', (e) => { state.burnCaptions = e.target.checked; renderReviewPanel(candidate, state); });

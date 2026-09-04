@@ -347,3 +347,148 @@ class UsageRepository:
                 ).fetchone()
                 return float(row["total"]) if row else 0.0
         return _safe("somar minutos", _query, 0.0)
+
+
+# ============================================================
+# Feedback dos criadores sobre os clipes
+# ============================================================
+
+@dataclass(frozen=True)
+class ClipFeedback:
+    id: int
+    user_id: int
+    job_id: str | None
+    clip_identifier: str | None
+    verdict: str
+    reason: str | None
+    score: float | None
+    category: str | None
+    candidate_type: str | None
+    duration_seconds: float | None
+    signals: str | None
+    created_at: str
+
+
+# Motivos de rejeição. São FECHADOS de propósito: campo de texto livre quase
+# ninguém preenche, e o que se preenche não dá pra agregar. Cada motivo aqui
+# aponta pra uma parte específica do sistema, então uma contagem alta diz
+# exatamente onde mexer.
+REJECTION_REASONS = {
+    "bad_start": "começou no lugar errado",       # -> boundaries (hook)
+    "bad_end": "terminou no lugar errado",        # -> boundaries (exit)
+    "boring": "momento não é interessante",       # -> scoring/discovery
+    "no_context": "não dá pra entender sozinho",  # -> standalone_score
+    "bad_framing": "enquadramento ruim",          # -> layout/face_crop
+    "bad_captions": "legenda errada",             # -> transcrição
+    "duplicate": "repetido de outro clipe",       # -> dedup
+    "other": "outro motivo",
+}
+
+
+class FeedbackRepository:
+    @staticmethod
+    def record(
+        user_id: int, verdict: str, job_id: str | None = None,
+        clip_identifier: str | None = None, reason: str | None = None,
+        score: float | None = None, category: str | None = None,
+        candidate_type: str | None = None, duration_seconds: float | None = None,
+        signals: str | None = None,
+    ) -> int | None:
+        """
+        Grava um voto. Se a pessoa mudar de ideia, o voto novo substitui o
+        anterior daquele clipe — senão a contagem ficaria inflada.
+        """
+        def _write():
+            with database.get_db() as conn:
+                if clip_identifier:
+                    conn.execute(
+                        "DELETE FROM clip_feedback WHERE user_id = ? AND clip_identifier = ?",
+                        (user_id, clip_identifier),
+                    )
+                cursor = conn.execute(
+                    """INSERT INTO clip_feedback
+                       (user_id, job_id, clip_identifier, verdict, reason, score,
+                        category, candidate_type, duration_seconds, signals, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (user_id, job_id, clip_identifier, verdict, reason, score,
+                     category, candidate_type, duration_seconds, signals,
+                     database._now()),
+                )
+                conn.commit()
+                return cursor.lastrowid
+        return _safe("registrar feedback", _write)
+
+    @staticmethod
+    def list_for_user(user_id: int, limit: int = 500) -> list[ClipFeedback]:
+        def _query():
+            with database.get_db() as conn:
+                return conn.execute(
+                    "SELECT * FROM clip_feedback WHERE user_id = ? "
+                    "ORDER BY created_at DESC LIMIT ?",
+                    (user_id, limit),
+                ).fetchall()
+        return _to_models(ClipFeedback, _safe("listar feedback", _query, []))
+
+    @staticmethod
+    def summary(user_id: int | None = None) -> dict:
+        """
+        O número que importa: de cada 10 clipes, quantos a pessoa aprovaria.
+
+        Junto vem a contagem por motivo de rejeição — é ela que diz qual
+        parte do sistema melhorar primeiro.
+        """
+        def _query():
+            with database.get_db() as conn:
+                where, params = "", ()
+                if user_id is not None:
+                    where, params = "WHERE user_id = ?", (user_id,)
+
+                rows = conn.execute(
+                    f"SELECT verdict, COUNT(*) AS n FROM clip_feedback {where} "
+                    f"GROUP BY verdict", params
+                ).fetchall()
+                counts = {r["verdict"]: r["n"] for r in rows}
+
+                reason_rows = conn.execute(
+                    f"SELECT reason, COUNT(*) AS n FROM clip_feedback "
+                    f"{where + (' AND' if where else 'WHERE')} verdict = 'rejected' "
+                    f"AND reason IS NOT NULL GROUP BY reason ORDER BY n DESC",
+                    params
+                ).fetchall()
+
+                approved = counts.get("approved", 0)
+                rejected = counts.get("rejected", 0)
+                total = approved + rejected
+                return {
+                    "approved": approved,
+                    "rejected": rejected,
+                    "total": total,
+                    "approval_rate": round(approved / total, 3) if total else None,
+                    "rejection_reasons": {r["reason"]: r["n"] for r in reason_rows},
+                }
+        return _safe("resumir feedback", _query, {
+            "approved": 0, "rejected": 0, "total": 0,
+            "approval_rate": None, "rejection_reasons": {},
+        })
+
+
+def _minutes_this_month(user_id: int) -> float:
+    """
+    Minutos de vídeo processados no mês corrente.
+
+    A régua da cobrança é o MINUTO ENVIADO, não o clipe gerado: o custo é
+    processar 1 hora de vídeo, saindo 3 ou 20 clipes dela.
+    """
+    def _query():
+        with database.get_db() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(minutes_processed), 0) AS total "
+                "FROM usage_events WHERE user_id = ? "
+                "AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')",
+                (user_id,),
+            ).fetchone()
+            return float(row["total"]) if row else 0.0
+    return _safe("somar minutos do mês", _query, 0.0)
+
+
+UsageRepository.minutes_this_month = staticmethod(_minutes_this_month)

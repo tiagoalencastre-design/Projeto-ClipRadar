@@ -164,6 +164,18 @@
     .hero-actions { flex-direction: column; }
     .header-actions .btn-secondary { display: none; }
   }
+  .pricing-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+    gap:20px; max-width:760px; margin:0 auto; }
+  .price-card { background:var(--bg-panel); border:1px solid var(--border-subtle);
+    border-radius:var(--radius-lg); padding:28px; }
+  .price-card.featured { border-color:rgba(124,252,60,0.45); }
+  .price-card h3 { font-size:1.1rem; margin-bottom:4px; }
+  .price-card .amount { font-size:2rem; font-weight:700; margin:12px 0 4px; }
+  .price-card .period { color:var(--text-muted); font-size:0.85rem; margin-bottom:20px; }
+  .price-card ul { list-style:none; padding:0; margin:0 0 24px; }
+  .price-card li { padding:7px 0; font-size:0.9rem; color:var(--text-muted);
+    border-bottom:1px solid rgba(255,255,255,0.04); }
+  .price-card li strong { color:var(--text-primary); }
 </style>
 </head>
 <body>
@@ -285,7 +297,15 @@
 
   <section id="precos">
     <div class="wrap">
-      <div class="final-cta">
+      <h2 style="text-align:center;margin-bottom:8px">Planos</h2>
+      <p style="text-align:center;color:var(--text-muted);margin-bottom:32px">
+        Comece de graça. Assine quando precisar de mais.
+      </p>
+      <div class="pricing-grid" id="pricingGrid">
+        <p style="color:var(--text-muted);text-align:center">Carregando…</p>
+      </div>
+
+      <div class="final-cta" style="margin-top:56px">
         <h2>Comece agora, de graça</h2>
         <p>Crie sua conta e transforme sua primeira live em clips prontos pra postar. Sem cartão de crédito.</p>
         <a class="btn btn-primary btn-lg" href="/login?signup=1">Criar conta grátis</a>
@@ -298,5 +318,51 @@
   <div class="wrap">© 2026 ClipRadar</div>
 </footer>
 
+<script>
+// Preço na moeda da região. Detecta pelo fuso horário do navegador — sem
+// pedir permissão de localização e sem serviço externo.
+(function () {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  let country = 'US';
+  if (zone.startsWith('America/Sao_Paulo') || zone.startsWith('America/Bahia')
+      || zone.startsWith('America/Fortaleza') || zone.startsWith('America/Recife')
+      || zone.startsWith('America/Manaus') || zone.startsWith('America/Belem')) {
+    country = 'BR';
+  } else if (zone.startsWith('Europe/London')) {
+    country = 'GB';
+  } else if (zone.startsWith('Europe/')) {
+    country = 'PT';
+  }
+
+  fetch('/api/plans?country=' + country)
+    .then(r => r.json())
+    .then(data => {
+      const grid = document.getElementById('pricingGrid');
+      grid.innerHTML = data.plans.map(p => {
+        const pro = p.id === 'pro';
+        return `
+        <div class="price-card ${pro ? 'featured' : ''}">
+          <h3>${p.name}</h3>
+          <div class="amount">${p.price.formatted}</div>
+          <div class="period">${pro ? 'por mês' : 'para sempre'}</div>
+          <ul>
+            <li><strong>${p.monthly_minutes} min</strong> de vídeo por mês</li>
+            <li>Clips guardados por <strong>${p.retention_days} dias</strong></li>
+            <li>${p.watermark ? 'Com marca d\'água' : '<strong>Sem marca d\'água</strong>'}</li>
+            <li>${p.ai_extras_included ? '<strong>Título e thumbnail por IA</strong>' : 'Título e thumbnail por IA à parte'}</li>
+          </ul>
+          <a class="btn ${pro ? 'btn-primary' : 'btn-secondary'}" href="/login?signup=1"
+             style="width:100%;justify-content:center">
+            ${pro ? 'Assinar' : 'Começar grátis'}
+          </a>
+        </div>`;
+      }).join('');
+    })
+    .catch(() => {
+      document.getElementById('pricingGrid').innerHTML =
+        '<p style="color:var(--text-muted);text-align:center">Não foi possível carregar os planos.</p>';
+    });
+})();
+</script>
 </body>
 </html>
