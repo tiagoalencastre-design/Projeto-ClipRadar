@@ -170,7 +170,9 @@ def content_signature(candidate) -> dict:
     }
 
 
-def same_content(a, b, text_threshold: float = 0.75) -> tuple[bool, str]:
+def same_content(
+    a, b, text_threshold: float = 0.75, overlap_threshold: float = 0.9,
+) -> tuple[bool, str]:
     """
     Dois candidatos são o mesmo acontecimento?
 
@@ -203,13 +205,15 @@ def same_content(a, b, text_threshold: float = 0.75) -> tuple[bool, str]:
     longer = max(a.duration_seconds, b.duration_seconds)
     shorter = min(a.duration_seconds, b.duration_seconds)
     similar_length = shorter / max(longer, 0.1) > 0.7
-    if overlap >= 0.9 and similar_length:
+    if overlap >= overlap_threshold and similar_length:
         return True, "cobre praticamente o mesmo trecho"
 
     return False, ""
 
 
-def deduplicate_candidates(candidates: list, text_threshold: float = 0.75) -> list:
+def deduplicate_candidates(
+    candidates: list, text_threshold: float = 0.75, overlap_threshold: float = 0.9,
+) -> list:
     """Mantém o de maior nota em cada grupo de candidatos equivalentes."""
     ordered = sorted(
         candidates,
@@ -220,7 +224,8 @@ def deduplicate_candidates(candidates: list, text_threshold: float = 0.75) -> li
     for candidate in ordered:
         duplicate = False
         for existing in kept:
-            duplicate, reason = same_content(candidate, existing, text_threshold)
+            duplicate, reason = same_content(
+                candidate, existing, text_threshold, overlap_threshold)
             if duplicate:
                 candidate.selection_reason = f"descartado: {reason}"
                 break
@@ -234,7 +239,7 @@ def select_with_diversity(
     max_clips: int,
     category_weight: float = 0.35,
     temporal_weight: float = 0.2,
-    temporal_window: float = 120.0,
+    temporal_window: float | None = None,
 ) -> list:
     """
     Seleção final equilibrando nota, variedade de categoria e espalhamento
@@ -247,6 +252,16 @@ def select_with_diversity(
     remaining = list(candidates)
     selected: list = []
     used_categories: dict[str, int] = {}
+
+    # A janela de "está perto demais" precisa acompanhar a duração do vídeo.
+    # Um valor fixo de 120s equivale a 1% de um VOD de 3 horas — ou seja,
+    # não separa nada, e a seleção acaba concentrada no começo. Aqui ela
+    # vira uma fração do próprio vídeo.
+    if temporal_window is None and candidates:
+        span = max(c.end_seconds for c in candidates) - min(c.start_seconds for c in candidates)
+        temporal_window = max(span / max(max_clips, 1), 60.0)
+    elif temporal_window is None:
+        temporal_window = 120.0
 
     while remaining and len(selected) < max_clips:
         best, best_value = None, None

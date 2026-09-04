@@ -36,12 +36,10 @@ candidate_moments:
   story_max_silence_seconds: 4.0
 
 # Quantidade e variedade dos clipes gerados (usado pelo montage.py).
+# Teto de renderização (a seleção editorial mora em "selection").
 clip_selection:
   max_clips: 20
   min_clips: 1
-  score_floor: 35.0
-  score_gap: 35.0
-  diversity_weight: 0.35
 
 # ============================================================
 # V2 — descoberta e seleção separadas
@@ -50,14 +48,20 @@ clip_selection:
 # filtrava enquanto descobria, e por isso perdia oportunidades.
 
 discovery:
-  # Teto de candidatos brutos. Alto de propósito: nesta fase o sistema deve
-  # ser permissivo. Um VOD de 2h pode legitimamente gerar 50-100.
-  max_raw_candidates: 100
+  # Cota PROPORCIONAL à duração do vídeo. Um teto global fazia a análise
+  # parar no meio de VODs longos: 3 horas de live viravam clipes só dos
+  # primeiros 20 minutos.
+  max_candidates_per_hour: 60
+  absolute_max_candidates: 600   # proteção de memória, não meta
 
 selection:
-  # Quantos clipes entregar no fim. O número REAL sai da qualidade
-  # disponível — este é só o teto.
-  max_final_clips: 10
+  # "auto" = a quantidade sai da QUALIDADE disponível. Um vídeo fraco não
+  # rende 10 clipes ruins só porque alguém pediu 10.
+  # Aceita também um número fixo: 5, 10, 15, 20, 30.
+  max_final_clips: auto
+  auto_quality_threshold: 55.0   # nota a partir da qual o clipe "presta"
+  auto_max_clips: 20             # teto de segurança do modo auto
+  auto_min_clips: 3              # mesmo num vídeo fraco, entrega os melhores
   min_score: 40.0
   diversity_enabled: true
   category_diversity_weight: 0.35   # evita 5 clipes do mesmo tipo
@@ -77,7 +81,6 @@ clip_duration:
   absolute_max_seconds: 75
 
 context:
-  min_context_seconds: 2
   max_context_seconds: 45
 
 deduplication:
@@ -89,6 +92,7 @@ deduplication:
 # entende o que aconteceu?" é a pergunta que mais separa clipe bom de ruim.
 editorial:
   standalone: 1.4
+  short_form_fit: 0.6
   context: 1.1
   payoff: 1.2
   hook: 1.0

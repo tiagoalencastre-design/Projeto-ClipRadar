@@ -658,6 +658,55 @@ def _concat_hard_cut(piece_paths: list[str], output_path: str) -> None:
     _run_ffmpeg(cmd, "remontar o momento após remover silêncios")
 
 
+def _resolve_cut_points(
+    moment: dict,
+    edit_plan: dict | None,
+    start_override: float | None,
+    end_override: float | None,
+) -> tuple[float, float]:
+    """
+    Decide onde o clipe começa e termina.
+
+    PRIORIDADE (da maior pra menor):
+      1. override explícito — o usuário arrastou o corte na tela de revisão;
+      2. hook_point / exit_point do Edit Plan;
+      3. os limites calculados pelo motor de boundaries.
+
+    POR QUE ISTO EXISTE: o Edit Plan produzia hook_point, payoff_point e
+    exit_point desde sempre, e NENHUM deles chegava ao corte. Eram campos
+    calculados e ignorados — o clipe saía com os limites do motor,
+    independentemente do que o plano editorial dissesse.
+
+    Os pontos do plano são validados contra o intervalo do momento: um
+    hook_point fora dele significaria cortar um pedaço errado do vídeo, e
+    nesse caso preferimos o valor do motor.
+    """
+    base_start = moment["context_start_seconds"]
+    base_end = moment["end_seconds"]
+
+    start = base_start
+    end = base_end
+
+    if edit_plan:
+        hook = edit_plan.get("hook_point")
+        exit_point = edit_plan.get("exit_point")
+        # Margem de 5s: o plano pode sugerir um pouco antes/depois do
+        # intervalo original, mas não um trecho completamente diferente.
+        if isinstance(hook, (int, float)) and base_start - 5 <= hook < base_end:
+            start = float(hook)
+        if isinstance(exit_point, (int, float)) and start < exit_point <= base_end + 5:
+            end = float(exit_point)
+
+    if start_override is not None:
+        start = start_override
+    if end_override is not None:
+        end = end_override
+
+    if end - start < 1.0:      # plano inconsistente: volta pro motor
+        return base_start, base_end
+    return start, end
+
+
 def cut_reframe_and_caption(
     video_path: str,
     moment: dict,
@@ -675,8 +724,7 @@ def cut_reframe_and_caption(
     start_override: float | None = None,
     end_override: float | None = None,
 ) -> None:
-    start = start_override if start_override is not None else moment["context_start_seconds"]
-    end = end_override if end_override is not None else moment["end_seconds"]
+    start, end = _resolve_cut_points(moment, edit_plan, start_override, end_override)
     words = moment.get("transcript_words", [])
     srt_dir = srt_dir or "."
 

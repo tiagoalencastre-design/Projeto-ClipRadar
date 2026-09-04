@@ -180,7 +180,7 @@ def main():
         print(f"  [{m.score:5.1f}] {m.clip_id}  {format_timestamp(m.start_seconds):>8} -> {format_timestamp(m.end_seconds):>8}  "
               f"(contexto desde {format_timestamp(m.context_start_seconds):>8})  fontes: {m.signal_sources}")
     print(f"\nResultado completo salvo em: {output_path}")
-    print("Rode `streamlit run app/dashboard.py` para usar a interface visual.")
+    print("Rode `python -m uvicorn core.api_server:app --reload` e abra http://localhost:8000")
 
 
 if __name__ == "__main__":

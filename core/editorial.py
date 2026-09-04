@@ -112,6 +112,13 @@ class HeuristicEditorialAnalyzer(EditorialAnalyzer):
 
     name = "heuristic"
 
+    # Faixa em que um clipe funciona melhor em short-form. NÃO é uma meta:
+    # a duração continua saindo do conteúdo. Isto só reconhece que um clipe
+    # de 4s raramente conta uma história e um de 70s raramente segura o
+    # espectador até o fim.
+    IDEAL_MIN_SECONDS = 15.0
+    IDEAL_MAX_SECONDS = 45.0
+
     DEFAULT_WEIGHTS = {
         "standalone": 1.4,
         "context": 1.1,
@@ -120,11 +127,18 @@ class HeuristicEditorialAnalyzer(EditorialAnalyzer):
         "ending": 0.8,
         "emotion": 0.9,
         "narrative_completeness": 1.0,
+        # Peso modesto de propósito: a duração continua saindo do conteúdo.
+        # Isto só reconhece que 5s raramente conta história e 90s raramente
+        # segura o espectador — não força ninguém a ficar na faixa.
+        "short_form_fit": 0.6,
         "originality": 0.3,
     }
 
-    def __init__(self, weights: dict | None = None):
+    def __init__(self, weights: dict | None = None, duration_config: dict | None = None):
         self.weights = {**self.DEFAULT_WEIGHTS, **(weights or {})}
+        cfg = duration_config or {}
+        self.ideal_min = float(cfg.get("ideal_min_seconds", self.IDEAL_MIN_SECONDS))
+        self.ideal_max = float(cfg.get("ideal_max_seconds", self.IDEAL_MAX_SECONDS))
 
     # ---------- componentes ----------
 
@@ -245,6 +259,23 @@ class HeuristicEditorialAnalyzer(EditorialAnalyzer):
             score += 20.0
         return _clamp(score + 15.0)
 
+    def short_form_fit(self, candidate: ClipCandidate) -> float:
+        """
+        Quão bem a duração serve ao formato curto.
+
+        Dentro da faixa ideal, nota cheia. Fora dela, cai suavemente — nunca
+        zera. Um clipe excelente de 8 segundos ainda é excelente; ele só não
+        ganha ponto por duração.
+        """
+        duration = candidate.duration_seconds
+        if self.ideal_min <= duration <= self.ideal_max:
+            return 100.0
+        if duration < self.ideal_min:
+            # 8s numa faixa que começa em 15s -> perde proporcionalmente
+            return _clamp(45.0 + (duration / self.ideal_min) * 55.0)
+        excess = duration - self.ideal_max
+        return _clamp(100.0 - excess * 1.6)
+
     def originality_score(self, candidate: ClipCandidate) -> float:
         """
         Vocabulário variado como proxy fraco de originalidade.
@@ -267,6 +298,7 @@ class HeuristicEditorialAnalyzer(EditorialAnalyzer):
             "hook": self.hook_score(candidate),
             "payoff": self.payoff_score(candidate),
             "ending": self.ending_score(candidate),
+            "short_form_fit": self.short_form_fit(candidate),
             "emotion": self.emotion_score(candidate),
             "narrative_completeness": self.narrative_completeness(candidate),
             "originality": self.originality_score(candidate),
@@ -282,9 +314,10 @@ def analyze_all(
     candidates: list[ClipCandidate],
     analyzer: EditorialAnalyzer | None = None,
     weights: dict | None = None,
+    duration_config: dict | None = None,
 ) -> list[ClipCandidate]:
     """Preenche heuristic_scores de cada candidato. Devolve a mesma lista."""
-    engine = analyzer or HeuristicEditorialAnalyzer(weights)
+    engine = analyzer or HeuristicEditorialAnalyzer(weights, duration_config)
     for c in candidates:
         c.heuristic_scores = engine.analyze_candidate(c)
     return candidates
