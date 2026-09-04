@@ -42,6 +42,35 @@ from core.face_crop import detect_face_offset_fraction, build_face_aware_crop_fi
 from core.pipeline import load_config
 
 VERTICAL_FILTER = "crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920"
+
+# Parâmetros de saída usados em TODA codificação de vídeo do projeto.
+#
+# POR QUE ISTO EXISTE: sem padronizar, cada trecho saía com fps e base de
+# tempo herdados do vídeo de origem. Ao juntar pedaços diferentes com
+# "concat -c copy", os timestamps ficavam fora de ordem e o arquivo final
+# não abria no Windows ("unsupported encoding settings", 0x80004005).
+#
+# - pix_fmt yuv420p : o único formato que todo player e toda rede social
+#                     aceitam. Sem isso, o x264 pode sair em yuv444p e o
+#                     arquivo não abre em player nenhum.
+# - r 30            : fps fixo, pra que os pedaços possam ser concatenados.
+# - video_track_timescale : mesma base de tempo em todos os pedaços.
+# - ar/ac           : áudio uniforme (48 kHz estéreo), mesma razão.
+# - faststart       : move o índice pro começo do arquivo, o que faz o
+#                     vídeo começar a tocar antes de baixar inteiro.
+VIDEO_OUTPUT_ARGS = [
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-crf", "23",
+    "-pix_fmt", "yuv420p",
+    "-r", "30",
+    "-video_track_timescale", "15360",
+    "-c:a", "aac",
+    "-b:a", "192k",
+    "-ar", "48000",
+    "-ac", "2",
+    "-movflags", "+faststart",
+]
 HORIZONTAL_FILTER = "scale=1920:1080"
 
 VERTICAL_RES = (1080, 1920)
@@ -509,10 +538,7 @@ def _cut_single_interval(
             "-map", f"[{stage_label}]",
             "-map", "0:a",
             "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
-            "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-crf", "23",
-            "-c:a", "aac",
+            *VIDEO_OUTPUT_ARGS,
             output_path,
         ]
     else:
@@ -528,10 +554,7 @@ def _cut_single_interval(
             "-t", str(duration),
             "-vf", vf,
             "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
-            "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-crf", "23",
-            "-c:a", "aac",
+            *VIDEO_OUTPUT_ARGS,
             output_path,
         ]
     _run_ffmpeg(cmd, f"cortar o trecho {clip_id}")
@@ -544,7 +567,18 @@ def _concat_hard_cut(piece_paths: list[str], output_path: str) -> None:
             safe_path = Path(p).resolve().as_posix()
             f.write(f"file '{safe_path}'\n")
 
-    cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", output_path]
+    # RECODIFICA em vez de "-c copy".
+    #
+    # O copy só é válido quando todos os pedaços têm exatamente os mesmos
+    # parâmetros. Na prática não tinham (fps e base de tempo vinham do vídeo
+    # de origem), e o resultado era um arquivo com timestamps fora de ordem
+    # que o Windows recusava abrir. Recodificar custa alguns segundos e
+    # garante um arquivo válido em qualquer player.
+    cmd = [
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file,
+        *VIDEO_OUTPUT_ARGS,
+        output_path,
+    ]
     _run_ffmpeg(cmd, "remontar o momento após remover silêncios")
 
 
@@ -653,10 +687,7 @@ def build_montage_with_crossfade(
         "-filter_complex", filter_complex,
         "-map", f"[{prev_v}]",
         "-map", f"[{prev_a}]",
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "23",
-        "-c:a", "aac",
+        *VIDEO_OUTPUT_ARGS,
         output_path,
     ]
     _run_ffmpeg(cmd, "juntar os momentos na montagem final")
