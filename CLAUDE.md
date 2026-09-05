@@ -1,79 +1,86 @@
-# ClipRadar — guia para trabalho assistido
+# ClipRadar
 
-SaaS que transforma VODs longos de gameplay em clipes verticais para
-TikTok / Reels / Shorts. Público-alvo: criadores gamers brasileiros.
+Transforma VODs longos de gameplay em clipes verticais 9:16 para TikTok,
+Reels e Shorts. Público: criadores gamers brasileiros. Todo o processamento
+roda localmente.
+
+## Stack
+
+Python 3.12 · FastAPI · SQLite · FFmpeg (via `subprocess`, não biblioteca)
+faster-whisper (CPU) · PySceneDetect · librosa · Pillow
+Front-end: HTML + CSS + JS puro, sem framework
+Testes: `unittest` da biblioteca padrão — **sem pytest**
 
 ## Regras invioláveis
 
-1. **Nenhuma IA nesta fase.** Sem OmniRoute, OpenAI, Claude, Gemini ou
-   qualquer LLM tomando decisão editorial. O motor é determinístico. A
-   camada `core/ai_providers/` existe e está desligada.
-2. **Segredos só no `.env`.** Nunca em `settings.yaml`, nunca em comentário,
-   nunca commitado. Uma chave já vazou assim antes.
-3. **Rodar os testes antes de entregar:** `python -m unittest discover -s tests`
-   (459 testes, ~14s). Nunca alterar um teste para fazê-lo passar.
-   Durante o trabalho, o hook roda apenas os testes do módulo tocado; a
-   suíte completa roda ao fim da tarefa.
+1. **Nenhuma IA no pipeline.** O motor é 100% determinístico. Existe uma
+   camada `core/ai_providers/` pronta e DESLIGADA; não integrar OmniRoute,
+   OpenAI ou qualquer LLM nesta fase.
+2. **Segredos só no `.env`.** Nunca em `settings.yaml`, nunca em comentário.
+   Já houve vazamento de chave neste projeto.
+3. **Nunca alterar um teste para fazê-lo passar.** Se falhou, ou o código
+   está errado ou o teste mede a coisa errada — investigue antes.
+4. **Não inventar arquitetura.** Se não existe no código, não escreva como
+   se existisse.
 
-## Pipeline real
+## Fluxo do pipeline
 
 ```
-VOD → sinais (áudio/cena) → transcrição (Whisper)
-    → events → stories → candidates → editorial → dedup → diversity
+VOD → sinais (áudio + cena) → transcrição
+    → events → stories → candidates → editorial → dedup → diversidade
     → clipes selecionados → edit plan → FFmpeg
 ```
 
-Ponto de entrada único: `core/discovery.py :: discover_and_select()`.
-Chamado por `core/pipeline.py`. **`core/legacy/` é código morto** — não
-importar de lá. A seção `legacy:` do settings.yaml alimenta só ele.
+Entrada única: `core/discovery.py :: discover_and_select()`,
+chamada por `core/pipeline.py :: run_pipeline()`.
 
-## Quem manda em quê
+## Módulos
 
-| Módulo | Responsabilidade |
+| Caminho | Responsabilidade |
 |---|---|
-| `events.py` | sinais viram eventos tipados |
-| `story.py` | agrupa eventos relacionados, separa independentes |
-| `boundaries.py` | hook / payoff / exit pela transcrição |
-| `candidates.py` | uma história gera vários candidatos |
-| `editorial.py` | scoring heurístico (`EditorialAnalyzer` é o ponto de IA futura) |
-| `dedup.py` | deduplicação por conteúdo + diversidade |
-| `discovery.py` | **única autoridade de seleção** |
-| `montage.py` | orquestra o corte e a renderização. Não decide nada |
-| `render/filters.py` | filtros de vídeo (funções puras) |
-| `render/ffmpeg.py` | executa FFmpeg, sonda duração/fps, `VIDEO_OUTPUT_ARGS` |
-| `api_server.py` | rotas FastAPI (26) |
-| `plans.py` | grátis / pro / studio, limites e preços |
+| `core/detection.py` | picos de áudio e cortes de cena |
+| `core/transcription.py` | faster-whisper, timestamps por palavra |
+| `core/events.py` | sinais viram eventos tipados |
+| `core/story.py` | agrupa eventos; separa os independentes |
+| `core/candidates.py` | uma história gera vários candidatos |
+| `core/boundaries.py` | hook / payoff / exit pela transcrição |
+| `core/editorial.py` | scoring heurístico; `EditorialAnalyzer` é a interface |
+| `core/dedup.py` | deduplicação por conteúdo e diversidade |
+| `core/discovery.py` | **única autoridade de seleção** |
+| `core/montage.py` | orquestra corte e render. Não decide nada |
+| `core/render/filters.py` | filtros de vídeo (funções puras) |
+| `core/render/ffmpeg.py` | executa FFmpeg; `VIDEO_OUTPUT_ARGS` |
+| `core/api_server.py` | rotas FastAPI |
+| `core/database.py` · `repositories.py` · `persistence.py` | SQLite |
+| `core/plans.py` | planos, limites, preços |
+| `core/legacy/` | **código morto** — não importar |
+| `web/index.html` · `assets/app.css` · `assets/app.js` | front-end |
+| `config/settings.yaml` | configuração do pipeline |
 
-## Armadilhas conhecidas
+## Comandos
 
-- **Vírgula em filtro FFmpeg** precisa de `\,` — bug real já corrigido.
-- **Sempre `-pix_fmt yuv420p`** e fps fixo. Sem isso o vídeo não abre no
-  Windows. Use `VIDEO_OUTPUT_ARGS` de `render/ffmpeg.py`, nunca parâmetros
-  soltos.
-- **Caminho de arquivo dentro de filtro precisa escapar `:`** (`C\:/...`),
-  senão o FFmpeg lê só a letra do drive no Windows.
-- **Nunca `concat -c copy`** com pedaços heterogêneos: gera timestamps
-  quebrados.
-- **Front-end separado em 3 arquivos:** `web/index.html` (245 linhas, só
-  marcação), `web/assets/app.css` e `web/assets/app.js` (traduções,
-  navegação, upload, biblioteca, feedback). Editar só o arquivo relevante.
-  Confira o balanço de `<div>` depois (`tests/test_html_structure.py`).
-- **Textos de interface em 3 idiomas** (pt/en/es). Chave nova exige as três.
-- **Duração de clipe é consequência do conteúdo**, não meta.
+```bash
+python -m unittest discover -s tests            # 465 testes
+python -m uvicorn core.api_server:app --reload
+python run_benchmark.py
+python .claude/hooks/full_suite.py              # suíte via hook
+```
 
-## O que não refatorar agora
+## FFmpeg — não alterar sem necessidade
 
-`montage.py` na parte de FFmpeg, `subtitles.py`, `face_crop.py`. Cada string
-de filtro ali custou depuração real.
+Cada item abaixo custou depuração real:
 
-## Testes como rede de segurança
+- Vírgula dentro de expressão de filtro precisa de `\,`
+- Caminho de arquivo dentro de filtro precisa escapar `:` (`C\:/...`),
+  senão o FFmpeg lê só a letra do drive no Windows
+- Sempre usar `VIDEO_OUTPUT_ARGS`: `yuv420p`, fps fixo, timescale fixa
+- Nunca `concat -c copy` com pedaços de parâmetros diferentes
+- `scale` com altura `-2`, nunca `-1` (H.264 exige altura par)
 
-- `test_pipeline_integration.py` — garante que o pipeline usa a V3, não o legado
-- `test_v3_fixes.py` — cobertura de VOD longo, Edit Plan no corte, modo AUTO
-- `test_html_structure.py` — pega HTML quebrado que nenhum teste Python pegaria
-- `test_encoding_compat.py` — parâmetros de vídeo que abrem em qualquer player
+`core/subtitles.py` e `core/face_crop.py` também são delicados.
 
-## Ambiente
+## Outras armadilhas
 
-Windows, Python 3.12, venv, FFmpeg no PATH. `unittest` da biblioteca padrão
-(sem pytest). Servidor: `python -m uvicorn core.api_server:app --reload`.
+- Interface em **3 idiomas** (pt/en/es): chave nova exige as três
+- Depois de editar HTML, conferir balanço de `<div>`
+- Duração de clipe é consequência do conteúdo, não meta

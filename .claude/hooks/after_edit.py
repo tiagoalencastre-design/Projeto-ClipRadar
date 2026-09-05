@@ -1,24 +1,28 @@
 """
-Hook PostToolUse — verificação DIRECIONADA após editar um arquivo.
+Hook PostToolUse — verificação rápida após editar um arquivo Python.
 
-POR QUE NÃO RODA A SUÍTE INTEIRA: os 459 testes levam ~13s. Rodar tudo a
-cada edição desperdiça tempo e polui a saída. Aqui rodamos apenas os
-arquivos de teste que realmente exercitam o módulo alterado.
+O QUE ELE FAZ: compila o arquivo editado (checagem de sintaxe). Só isso.
 
-A suíte completa continua rodando no fim da tarefa (hook Stop) e pode ser
-chamada a qualquer momento com:
+O QUE ELE NÃO FAZ, E POR QUÊ: não roda testes. Rodar a suíte inteira a cada
+edição custa ~12 segundos e polui a saída. E mapear "arquivo editado" para
+"testes relevantes" exigiria uma heurística (procurar o nome do módulo dentro
+dos arquivos de teste) que erra em silêncio quando a relação é indireta —
+um teste que exercita o módulo sem citá-lo pelo nome não seria executado, e
+a impressão de cobertura seria falsa.
+
+Preferimos uma verificação 100% confiável e barata. A suíte completa roda no
+fim da tarefa (hook Stop) e pode ser chamada a qualquer momento:
+
     python -m unittest discover -s tests
 
-ENTRADA: JSON no stdin, conforme o protocolo de hooks do Claude Code.
-    {"tool_name": "...", "tool_input": {"file_path": "..."}, ...}
-
+ENTRADA: JSON no stdin (protocolo de hooks do Claude Code), com
+tool_input.file_path.
 SAÍDA: mensagem no stdout. Sai sempre com 0 — este hook informa, não bloqueia.
 """
 from __future__ import annotations
 
 import json
-import re
-import subprocess
+import py_compile
 import sys
 from pathlib import Path
 
@@ -27,52 +31,25 @@ def main() -> int:
     try:
         payload = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
-        return 0   # sem payload utilizável: não atrapalha
+        return 0
 
     file_path = (payload.get("tool_input") or {}).get("file_path") or ""
-    if not file_path:
+    if not file_path.endswith(".py"):
         return 0
 
     path = Path(file_path)
-    project = Path(payload.get("cwd") or ".")
-
-    # Só nos interessam fontes Python do projeto.
-    if path.suffix != ".py":
-        return 0
-    parts = path.as_posix()
-    if "/core/" not in parts and "/tests/" not in parts:
+    if not path.is_file():
         return 0
 
-    tests_dir = project / "tests"
-    if not tests_dir.is_dir():
+    try:
+        py_compile.compile(str(path), doraise=True)
+    except py_compile.PyCompileError as e:
+        print(f"[hook] ERRO DE SINTAXE em {path.name}:")
+        print(f"       {e.msg.strip().splitlines()[-1]}")
         return 0
 
-    # Editou um teste? roda só ele.
-    if "/tests/" in parts:
-        targets = [path.stem]
-    else:
-        # Editou um módulo do core: roda os testes que o importam.
-        module = path.stem
-        pattern = re.compile(rf"\b(core\.{module}|from core import .*\b{module}\b)")
-        targets = [
-            test.stem for test in sorted(tests_dir.glob("test_*.py"))
-            if pattern.search(test.read_text(encoding="utf-8", errors="ignore"))
-        ]
-
-    if not targets:
-        print(f"[hook] {path.name}: nenhum teste direcionado encontrado. "
-              f"Rode a suíte completa antes de concluir.")
-        return 0
-
-    result = subprocess.run(
-        [sys.executable, "-m", "unittest", *[f"tests.{t}" for t in targets]],
-        cwd=project, capture_output=True, text=True,
-    )
-    tail = (result.stderr or result.stdout).strip().splitlines()[-3:]
-    status = "OK" if result.returncode == 0 else "FALHOU"
-    print(f"[hook] testes direcionados ({len(targets)}): {status}")
-    for line in tail:
-        print(f"       {line}")
+    print(f"[hook] {path.name}: sintaxe OK. "
+          f"Rode a suíte completa antes de concluir a tarefa.")
     return 0
 
 

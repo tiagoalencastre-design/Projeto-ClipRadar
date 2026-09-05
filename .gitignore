@@ -1,38 +1,60 @@
+# ============================================================
 # Segredos — NUNCA versionar
+# ============================================================
 .env
 .env.*
 !.env.example
+*.env
 
-# Banco de dados — contém e-mails e hashes de senha de usuários
+# ============================================================
+# Banco de dados — contém e-mails e hashes de senha
+# ============================================================
 *.db
 *.sqlite
 *.sqlite3
-data/*.db
 
-# Ambiente virtual Python
+# ============================================================
+# Ambientes virtuais
+# ============================================================
+# Ambas as grafias: o projeto já usou "venv/" e passou a usar ".venv/".
 venv/
+.venv/
+
+# ============================================================
+# Artefatos do Python
+# ============================================================
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
 
-# Dados gerados localmente (vídeos, clipes, análises) — pesados demais pro Git
+# ============================================================
+# Dados gerados localmente
+# ============================================================
+# Regras específicas por pasta, NUNCA "data/" inteiro: data/benchmark
+# guarda os gabaritos de qualidade, que são fonte do projeto.
 data/vods/*
 data/clips/*
 data/cache/*
+data/brand_kits/*
 !data/vods/.gitkeep
 !data/clips/.gitkeep
 !data/cache/.gitkeep
-
-# Logos enviadas pelos usuários (Brand Kit) — conteúdo de usuário, não código
-data/brand_kits/*
 !data/brand_kits/.gitkeep
 
-# Análises geradas pelo benchmark. Os GABARITOS (data/benchmark/*.json) são
-# versionados de propósito: são a referência de qualidade do projeto.
+# Análises geradas pelo benchmark. Os GABARITOS (data/benchmark/*.json)
+# são versionados de propósito — são a referência de qualidade.
 data/benchmark/analysis/*
 !data/benchmark/analysis/.gitkeep
 
-# Configuração do editor (opcional manter, mas pode variar por máquina)
+# ============================================================
+# Configuração específica da máquina
+# ============================================================
 .vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
 
-# Lixo de sessões antigas
-mnt/
+# NÃO ignorar: core/ tests/ web/ config/ data/benchmark/*.json
+# requirements.txt CLAUDE.md .claude/
