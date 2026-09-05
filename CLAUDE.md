@@ -16,11 +16,14 @@ Testes: `unittest` da biblioteca padrão — **sem pytest**
 1. **Nenhuma IA no pipeline.** O motor é 100% determinístico. Existe uma
    camada `core/ai_providers/` pronta e DESLIGADA; não integrar OmniRoute,
    OpenAI ou qualquer LLM nesta fase.
-2. **Segredos só no `.env`.** Nunca em `settings.yaml`, nunca em comentário.
+2. **Mídia nunca por `StaticFiles`.** Clipes e vídeos passam por
+   `/files/clips/...` e `/files/vods/...`, que exigem sessão e verificam o
+   dono. Reintroduzir um `app.mount` para essas pastas reabre o vazamento.
+3. **Segredos só no `.env`.** Nunca em `settings.yaml`, nunca em comentário.
    Já houve vazamento de chave neste projeto.
-3. **Nunca alterar um teste para fazê-lo passar.** Se falhou, ou o código
+4. **Nunca alterar um teste para fazê-lo passar.** Se falhou, ou o código
    está errado ou o teste mede a coisa errada — investigue antes.
-4. **Não inventar arquitetura.** Se não existe no código, não escreva como
+5. **Não inventar arquitetura.** Se não existe no código, não escreva como
    se existisse.
 
 ## Fluxo do pipeline
@@ -51,7 +54,11 @@ chamada por `core/pipeline.py :: run_pipeline()`.
 | `core/render/filters.py` | filtros de vídeo (funções puras) |
 | `core/render/ffmpeg.py` | executa FFmpeg; `VIDEO_OUTPUT_ARGS` |
 | `core/api_server.py` | rotas FastAPI |
-| `core/database.py` · `repositories.py` · `persistence.py` | SQLite |
+| `core/files.py` | entrega autenticada de mídia (+ Range) |
+| `core/database.py` · `repositories.py` · `persistence.py` | SQLite (WAL, FKs ligadas, índices) |
+| `core/queue.py` | **única** autoridade de vagas (`get_queue()`) |
+| `core/url_policy.py` | lista de URLs aceitas para download |
+| `core/rate_limit.py` | limite de tentativas por IP |
 | `core/plans.py` | planos, limites, preços |
 | `core/legacy/` | **código morto** — não importar |
 | `web/index.html` · `assets/app.css` · `assets/app.js` | front-end |

@@ -330,6 +330,25 @@
   .usage-bar span { display:block; height:100%; background:var(--accent-lime); transition:width .3s; }
   .usage-bar.full span { background:var(--accent-danger); }
   .library-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:16px; }
+
+  /* Estado vazio da biblioteca.
+     Fica FORA do grid: dentro dele, o texto era espremido numa coluna de
+     190px e quebrava em três linhas curtas. */
+  .library-empty { text-align:center; padding:64px 24px 72px; }
+  .library-empty .mark {
+    width:64px; height:64px; margin:0 auto 22px; border-radius:50%;
+    display:grid; place-items:center;
+    border:2px solid var(--accent-lime); opacity:0.85;
+  }
+  /* O disco central é o "ponto no radar": o clipe que ainda não existe. */
+  .library-empty .mark span {
+    width:14px; height:14px; border-radius:50%; background:var(--accent-lime);
+  }
+  .library-empty h3 { font-size:1.05rem; margin-bottom:8px; }
+  .library-empty p {
+    color:var(--text-muted); font-size:0.9rem; line-height:1.55;
+    max-width:34ch; margin:0 auto 26px;
+  }
   .library-item { background:var(--bg-void); border:1px solid var(--border-subtle); border-radius:var(--radius-md); overflow:hidden; }
   .library-item video { width:100%; aspect-ratio:9/16; object-fit:cover; background:#000; display:block; }
   .library-meta { padding:10px 12px; }

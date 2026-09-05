@@ -28,7 +28,7 @@ import uuid
 from pathlib import Path
 from typing import Literal
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Response, UploadFile, File
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -44,12 +44,15 @@ from core import email_service
 from core.app_config import get_app_config
 from core.job_store import PersistentJobStore
 from core.dependencies import APP_BASE_URL, SESSION_COOKIE_NAME, get_current_user
+from core.files import resolve_user_file, serve_file
+from core.url_policy import UrlNotAllowed, validate_download_url
 from core.routers import auth as auth_router
 from core.routers import system as system_router
 from core import persistence, retention
 from core.observability import StageTimer, log_event
 from datetime import datetime, timezone
 
+from core.queue import get_queue
 from core.plans import (
     UsageStatus, describe_plans, days_until_expiry, get_plan, region_for_country,
 )
@@ -58,16 +61,16 @@ from core.repositories import (
     VideoRepository,
 )
 
-VODS_DIR = Path("data/vods")
-CLIPS_DIR = Path("data/clips")
-CACHE_DIR = Path("data/cache")
-FRONTEND_DIR = Path(__file__).resolve().parent.parent / "web"
-ASSETS_DIR = FRONTEND_DIR / "assets"
-
-VODS_DIR.mkdir(parents=True, exist_ok=True)
-CLIPS_DIR.mkdir(parents=True, exist_ok=True)
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
-ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+# As pastas vêm de core/paths.py, que também as cria no import.
+#
+# Estavam declaradas aqui TAMBÉM. Duas constantes com o mesmo nome em dois
+# módulos é pior que duplicar função: os helpers de caminho usavam as de
+# paths.py e as rotas usavam as daqui. Enquanto os valores coincidiram,
+# ninguém notou — bastaria alguém mudar um dos dois para os arquivos irem
+# parar em pastas diferentes.
+from core.paths import (  # noqa: E402
+    ASSETS_DIR, CACHE_DIR, CLIPS_DIR, FRONTEND_DIR, VODS_DIR,
+)
 
 init_db()  # cria as tabelas de usuário/sessão se ainda não existirem
 
@@ -88,9 +91,29 @@ print(f"[ClipRadar] Modo atual: {_app_config.mode.upper()}")
 print(f"[ClipRadar] Feature flags: {_app_config.as_dict()['flags']}")
 
 app = FastAPI(title="ClipRadar API")
-app.mount("/files/clips", StaticFiles(directory=str(CLIPS_DIR)), name="clips")
-app.mount("/files/vods", StaticFiles(directory=str(VODS_DIR)), name="vods")
+# /assets é público de propósito: CSS, JS e logo, servidos antes do login.
 app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
+
+# Clipes e vídeos NÃO são servidos por StaticFiles.
+#
+# StaticFiles não passa por autenticação: bastava saber o caminho para
+# baixar o arquivo de qualquer usuário, sem sessão. As rotas autenticadas
+# abaixo mantêm as MESMAS URLs (/files/clips/..., /files/vods/...), então o
+# front-end e os links já gerados continuam funcionando.
+
+
+@app.get("/files/clips/{file_path:path}")
+def serve_clip(file_path: str, request: Request, user: dict = Depends(get_current_user)):
+    """Clipe gerado. Só o dono baixa."""
+    path = resolve_user_file(CLIPS_DIR, user["storage_key"], file_path)
+    return serve_file(path, request)
+
+
+@app.get("/files/vods/{file_path:path}")
+def serve_vod(file_path: str, request: Request, user: dict = Depends(get_current_user)):
+    """Vídeo de origem. Só o dono baixa."""
+    path = resolve_user_file(VODS_DIR, user["storage_key"], file_path)
+    return serve_file(path, request)
 
 # FASE 6: rotas de /api/auth/* agora vivem em core/routers/auth.py.
 # As URLs continuam exatamente as mesmas — o front-end não muda.
@@ -111,8 +134,6 @@ jobs = PersistentJobStore("generate")
 download_jobs = PersistentJobStore("youtube_download")
 analyze_jobs = PersistentJobStore("analyze")
 
-_active_jobs_lock = threading.Lock()
-_active_job_count = 0
 
 
 # ---------- Modelos de request ----------
@@ -155,64 +176,24 @@ class RenderClipRequest(BaseModel):
 # em core/dependencies.py, compartilhados entre api_server.py e os routers.
 
 
-# ---------- Helpers de arquivo (agora por usuário, via storage_key) ----------
-def _safe_filename(name: str) -> str:
-    name = re.sub(r'[<>:"/\\|?*]', "_", name)
-    return name.strip() or "video"
-
-
-def _user_vods_dir(storage_key: str) -> Path:
-    d = VODS_DIR / storage_key
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def _user_clips_dir(storage_key: str) -> Path:
-    d = CLIPS_DIR / storage_key
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def _user_cache_dir(storage_key: str) -> Path:
-    d = CACHE_DIR / storage_key
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def _resolve_vod_path(video_name: str, storage_key: str) -> Path:
-    user_dir = _user_vods_dir(storage_key)
-    candidate = (user_dir / video_name).resolve()
-    try:
-        candidate.relative_to(user_dir.resolve())
-    except ValueError:
-        raise HTTPException(400, "Nome de vídeo inválido.")
-    if not candidate.exists():
-        raise HTTPException(404, f"Vídeo não encontrado: {video_name}")
-    return candidate
-
-
-def _resolve_analysis_path(analysis_path: str, storage_key: str) -> Path:
-    user_cache = _user_cache_dir(storage_key)
-    candidate = Path(analysis_path).resolve()
-    try:
-        candidate.relative_to(user_cache.resolve())
-    except ValueError:
-        raise HTTPException(400, "Caminho de análise inválido.")
-    if not candidate.exists():
-        raise HTTPException(404, "Análise não encontrada.")
-    return candidate
-
-
-def _to_url(path: str | None) -> str | None:
-    if not path:
-        return None
-    rel = Path(path).resolve().relative_to(CLIPS_DIR.resolve())
-    return f"/files/clips/{rel.as_posix()}"
-
-
-def _to_vod_url(path: str) -> str:
-    rel = Path(path).resolve().relative_to(VODS_DIR.resolve())
-    return f"/files/vods/{rel.as_posix()}"
+# ---------- Helpers de arquivo ----------
+# Implementados em core/paths.py. Estavam duplicados aqui — oito funções
+# com o mesmo nome e (quase) o mesmo corpo em dois arquivos. Duas cópias de
+# uma regra de segurança é o pior tipo de duplicata: corrige-se uma e a
+# outra continua vulnerável.
+#
+# Os prefixos com "_" são mantidos porque dezenas de chamadas e testes já
+# usam esses nomes.
+from core.paths import (  # noqa: E402
+    resolve_analysis_path as _resolve_analysis_path,
+    resolve_vod_path as _resolve_vod_path,
+    safe_filename as _safe_filename,
+    to_url as _to_url,
+    to_vod_url as _to_vod_url,
+    user_cache_dir as _user_cache_dir,
+    user_clips_dir as _user_clips_dir,
+    user_vods_dir as _user_vods_dir,
+)
 
 
 def _cleanup_old_jobs() -> None:
@@ -223,25 +204,15 @@ def _cleanup_old_jobs() -> None:
             del store[jid]
 
 
-# Vaga extra reservada ao plano Studio. Existe ALÉM do limite normal, pra
-# que um assinante nunca fique preso atrás de dois usuários grátis.
-PRIORITY_SLOTS = 1
-
-
-def _try_acquire_job_slot(priority: bool = False) -> bool:
-    global _active_job_count
-    limit = MAX_CONCURRENT_JOBS + (PRIORITY_SLOTS if priority else 0)
-    with _active_jobs_lock:
-        if _active_job_count >= limit:
-            return False
-        _active_job_count += 1
-        return True
-
-
-def _release_job_slot() -> None:
-    global _active_job_count
-    with _active_jobs_lock:
-        _active_job_count = max(0, _active_job_count - 1)
+# O controle de vagas vive em core/queue.py.
+#
+# Antes havia DUAS arquiteturas: a fila oficial (JobQueue/ThreadQueue) e um
+# contador próprio aqui, com threading.Thread solto. Duas fontes de verdade
+# para a mesma coisa. Agora o servidor usa só a fila — e trocar por Redis ou
+# Celery no futuro é implementar JobQueue, sem tocar em nenhuma rota.
+#
+# A fila também cuida da vaga extra do plano Studio (priority=True) e libera
+# a vaga mesmo quando o job levanta exceção.
 
 
 def _check_job_owner(store: dict, job_id: str, user_id: int) -> dict:
@@ -316,20 +287,38 @@ def _video_minutes(video_path: Path) -> float:
         return 0.0
 
 
-def _enforce_quota(user: dict, video_path: Path) -> None:
-    """
-    Recusa ANTES de processar quando o vídeo não cabe no plano.
+# Serializa "checar cota" + "reservar cota".
+#
+# Sem este lock, dois envios simultâneos leem a mesma cota livre, ambos
+# passam, e o usuário processa o dobro do plano. A checagem e a reserva
+# precisam ser um passo só.
+_quota_lock = threading.Lock()
 
-    Descobrir que a cota acabou depois de esperar 20 minutos de
-    processamento seria péssimo — por isso a checagem vem primeiro.
+
+def _enforce_quota(user: dict, video_path: Path, job_id: str) -> float:
+    """
+    Verifica a cota e RESERVA os minutos do vídeo, de forma atômica.
+
+    Recusa antes de processar: descobrir que a cota acabou depois de esperar
+    20 minutos seria péssimo.
+
+    Devolve os minutos reservados (0.0 quando não foi possível medir a
+    duração — nesse caso não bloqueamos nem cobramos, porque a falha é
+    nossa, não do usuário).
     """
     minutes = _video_minutes(video_path)
     if minutes <= 0:
-        return   # não conseguimos medir: não bloqueia
+        return 0.0
 
-    allowed, message = _usage_status(user).can_process(minutes)
-    if not allowed:
-        raise HTTPException(402, message)
+    with _quota_lock:
+        allowed, message = _usage_status(user).can_process(minutes)
+        if not allowed:
+            raise HTTPException(402, message)
+        persistence.reserve_usage(
+            user_id=user["id"], job_id=job_id, minutes=minutes,
+            video_id=persistence.find_video_id(user, video_path),
+        )
+    return minutes
 
 
 def _usage_status(user: dict) -> UsageStatus:
@@ -579,15 +568,23 @@ async def upload_video(file: UploadFile = File(...), user: dict = Depends(get_cu
 @app.post("/api/videos/from-youtube")
 def start_youtube_download(req: YoutubeDownloadRequest, user: dict = Depends(get_current_user)) -> dict:
     _cleanup_old_jobs()
-    if not req.url.strip():
-        raise HTTPException(400, "URL vazia.")
+
+    # Lista de PERMISSÕES, não de bloqueios. O yt-dlp aceita quase qualquer
+    # URL — inclusive file:// e endereços da rede interna —, o que faria o
+    # servidor buscar recursos em nome de quem pediu.
+    try:
+        url = validate_download_url(req.url)
+    except UrlNotAllowed as e:
+        raise HTTPException(400, str(e))
 
     job_id = str(uuid.uuid4())
     download_jobs[job_id] = {"status": "running", "user_id": user["id"], "created_at": time.time()}
-    thread = threading.Thread(
-        target=_run_youtube_download, args=(job_id, req.url, user), daemon=True
-    )
-    thread.start()
+    # Download também passa pela fila. É I/O de rede, não CPU, mas ocupa
+    # disco e banda — e manter tudo num lugar só evita a dívida de ter dois
+    # mecanismos concorrentes de novo.
+    if not get_queue().submit(_run_youtube_download, job_id, url, user):
+        download_jobs[job_id].update({"status": "error", "error": "Fila cheia. Tente de novo."})
+        raise HTTPException(429, "Fila cheia. Tente de novo em instantes.")
     return {"job_id": job_id}
 
 
@@ -719,42 +716,67 @@ def _run_job(
             )
     except (PipelineError, MontageError) as e:
         jobs[job_id].update({"status": "error", "error": str(e)})
+        # Falha antes de entregar clipe nenhum: a cota volta. Sem isto, um
+        # erro de FFmpeg no primeiro segundo consumiria a hora inteira.
+        persistence.refund_usage(job_id)
         log_event(stage="job_falhou", status="error", job_id=job_id,
                   video_id=video_id, user_id=user["id"], error=str(e))
     except Exception:
         print(f"[ClipRadar] Erro inesperado no job {job_id}:\n{traceback.format_exc()}")
         jobs[job_id].update({"status": "error", "error": "Erro interno inesperado. Tente novamente."})
+        persistence.refund_usage(job_id)
         log_event(stage="job_falhou", status="error", job_id=job_id,
                   video_id=video_id, user_id=user["id"], error="erro interno")
-    finally:
-        _release_job_slot()
+    # A vaga é liberada pela fila (ThreadQueue faz isso no finally dela),
+    # inclusive quando esta função levanta exceção.
 
 
 @app.post("/api/generate")
 def generate(req: GenerateRequest, user: dict = Depends(get_current_user)) -> dict:
     _cleanup_old_jobs()
     video_path = _resolve_vod_path(req.video_name, user["storage_key"])
-    _enforce_quota(user, video_path)
+    # O job_id é a chave de idempotência da reserva de cota: é ele que
+    # impede um retry de cobrar duas vezes.
+    job_id = str(uuid.uuid4())
 
     plan = get_plan(user.get("plan"))
-    if not _try_acquire_job_slot(priority=plan.priority_queue):
+    queue = get_queue()
+    # Checagem barata antes de criar qualquer registro: devolve 429 rápido
+    # quando a fila já está cheia.
+    if not queue.has_capacity(priority=plan.priority_queue):
         raise HTTPException(429, f"Já tem {MAX_CONCURRENT_JOBS} vídeo(s) sendo processado(s). Tente depois.")
 
-    job_id = str(uuid.uuid4())
-    # video_id vai no dicionário: o PersistentJobStore o grava na tabela jobs,
-    # ligando o processamento ao vídeo de origem.
+    # ORDEM IMPORTA: o registro do job precisa existir ANTES da reserva de
+    # cota, porque usage_events.job_id tem FOREIGN KEY para jobs(id). Com o
+    # PRAGMA foreign_keys ligado, reservar antes falha silenciosamente e o
+    # consumo não é contabilizado.
+    #
+    # video_id vai no dicionário: o PersistentJobStore grava tudo na tabela
+    # jobs, ligando o processamento ao vídeo de origem.
     jobs[job_id] = {
         "status": "running", "step": "queued", "user_id": user["id"],
         "video_id": persistence.find_video_id(user, video_path),
         "created_at": time.time(),
     }
-    thread = threading.Thread(
-        target=_run_job,
-        args=(job_id, video_path, user, req.mode, req.orientation, req.platform,
-              req.burn_captions, req.subtitle_style, req.preset),
-        daemon=True,
+
+    try:
+        _enforce_quota(user, video_path, job_id)
+    except HTTPException:
+        # Cota estourada: desfaz o que já foi criado antes de recusar.
+        jobs[job_id].update({"status": "error", "error": "Cota mensal esgotada."})
+        raise
+
+    accepted = queue.submit(
+        _run_job, job_id, video_path, user, req.mode, req.orientation,
+        req.platform, req.burn_captions, req.subtitle_style, req.preset,
+        priority=plan.priority_queue,
     )
-    thread.start()
+    if not accepted:
+        # Corrida perdida: entre a checagem e o envio, a fila encheu.
+        # Desfaz tudo — o processamento não vai acontecer.
+        persistence.refund_usage(job_id)
+        jobs[job_id].update({"status": "error", "error": "Fila cheia. Tente de novo."})
+        raise HTTPException(429, f"Já tem {MAX_CONCURRENT_JOBS} vídeo(s) sendo processado(s). Tente depois.")
     return {"job_id": job_id}
 
 
@@ -787,37 +809,52 @@ def _run_analyze_job(job_id: str, video_path: Path, user: dict) -> None:
         })
     except PipelineError as e:
         analyze_jobs[job_id].update({"status": "error", "error": str(e)})
+        persistence.refund_usage(job_id)
         log_event(stage="analise_falhou", status="error", job_id=job_id,
                   video_id=video_id, user_id=user["id"], error=str(e))
     except Exception:
         print(f"[ClipRadar] Erro inesperado na análise {job_id}:\n{traceback.format_exc()}")
         analyze_jobs[job_id].update({"status": "error", "error": "Erro interno inesperado durante a análise."})
+        persistence.refund_usage(job_id)
         log_event(stage="analise_falhou", status="error", job_id=job_id,
                   video_id=video_id, user_id=user["id"], error="erro interno")
-    finally:
-        _release_job_slot()
+    # A vaga é liberada pela fila, inclusive em caso de exceção.
 
 
 @app.post("/api/analyze")
 def start_analyze(req: AnalyzeRequest, user: dict = Depends(get_current_user)) -> dict:
     _cleanup_old_jobs()
     video_path = _resolve_vod_path(req.video_name, user["storage_key"])
-    _enforce_quota(user, video_path)
+    # O job_id nasce antes da cota: ele é a chave de idempotência da
+    # reserva, e é o que impede um retry de cobrar duas vezes.
+    job_id = str(uuid.uuid4())
 
     plan = get_plan(user.get("plan"))
-    if not _try_acquire_job_slot(priority=plan.priority_queue):
+    queue = get_queue()
+    if not queue.has_capacity(priority=plan.priority_queue):
         raise HTTPException(429, f"Já tem {MAX_CONCURRENT_JOBS} vídeo(s) sendo processado(s). Tente depois.")
 
-    job_id = str(uuid.uuid4())
     analyze_jobs[job_id] = {
         "status": "running", "step": "queued", "user_id": user["id"],
         "video_id": persistence.find_video_id(user, video_path),
         "created_at": time.time(),
     }
-    thread = threading.Thread(
-        target=_run_analyze_job, args=(job_id, video_path, user), daemon=True
+
+    # Depois do registro do job, pela FK usage_events.job_id -> jobs(id).
+    try:
+        _enforce_quota(user, video_path, job_id)
+    except HTTPException:
+        analyze_jobs[job_id].update({"status": "error", "error": "Cota mensal esgotada."})
+        raise
+
+    accepted = queue.submit(
+        _run_analyze_job, job_id, video_path, user,
+        priority=plan.priority_queue,
     )
-    thread.start()
+    if not accepted:
+        persistence.refund_usage(job_id)
+        analyze_jobs[job_id].update({"status": "error", "error": "Fila cheia. Tente de novo."})
+        raise HTTPException(429, f"Já tem {MAX_CONCURRENT_JOBS} vídeo(s) sendo processado(s). Tente depois.")
     return {"job_id": job_id}
 
 

@@ -31,7 +31,9 @@ const translations = {
     layout_gameplay_full: "Gameplay cheio", layout_gameplay_facecam: "Gameplay + facecam", layout_facecam_focus: "Facecam em foco",
     layout_blur_background: "Fundo borrado",
     library_title: "Biblioteca de clips", library_subtitle: "Tudo que você já gerou fica aqui.",
-    library_empty: "Você ainda não gerou nenhum clip. Crie um projeto pra começar.",
+    library_empty_title: "Nenhum clip por aqui ainda",
+    library_empty: "Envie uma live ou cole um link do YouTube. Os clips gerados ficam salvos aqui.",
+    library_empty_action: "Enviar um vídeo",
     library_download: "Baixar", library_open: "Abrir",
     expires_today: "Expira hoje", expires_in: "Expira em", expires_days: "dias",
     usage_title: "Uso do mês", usage_of: "de", usage_minutes: "min",
@@ -136,7 +138,9 @@ const translations = {
     layout_gameplay_full: "Full gameplay", layout_gameplay_facecam: "Gameplay + facecam", layout_facecam_focus: "Facecam focus",
     layout_blur_background: "Blurred background",
     library_title: "Clip library", library_subtitle: "Everything you've generated lives here.",
-    library_empty: "You haven't generated any clips yet. Create a project to start.",
+    library_empty_title: "No clips here yet",
+    library_empty: "Upload a stream or paste a YouTube link. Generated clips are saved here.",
+    library_empty_action: "Upload a video",
     library_download: "Download", library_open: "Open",
     expires_today: "Expires today", expires_in: "Expires in", expires_days: "days",
     usage_title: "Monthly usage", usage_of: "of", usage_minutes: "min",
@@ -226,7 +230,9 @@ const translations = {
     layout_gameplay_full: "Gameplay completo", layout_gameplay_facecam: "Gameplay + facecam", layout_facecam_focus: "Facecam en foco",
     layout_blur_background: "Fondo desenfocado",
     library_title: "Biblioteca de clips", library_subtitle: "Todo lo que has generado está aquí.",
-    library_empty: "Aún no has generado ningún clip. Crea un proyecto para empezar.",
+    library_empty_title: "Todavía no hay clips",
+    library_empty: "Sube un directo o pega un enlace de YouTube. Los clips generados se guardan aquí.",
+    library_empty_action: "Subir un video",
     library_download: "Descargar", library_open: "Abrir",
     expires_today: "Expira hoy", expires_in: "Expira en", expires_days: "días",
     usage_title: "Uso del mes", usage_of: "de", usage_minutes: "min",
@@ -293,6 +299,29 @@ const translations = {
     soon_close: "Entendido",
   },
 };
+
+// ============================================================
+// Escape de HTML
+// ============================================================
+// Todo dado que NÃO foi escrito por nós passa por aqui antes de virar HTML.
+//
+// O risco é concreto, não teórico: o texto das legendas vem da transcrição
+// do vídeo, e o nome do arquivo vem do upload. Uma live em que alguém diz
+// algo que o Whisper transcreva com "<" e ">", ou um arquivo chamado
+// "<img onerror=...>.mp4", viraria HTML executável dentro da página.
+//
+// Preferimos escapar a trocar innerHTML por textContent em tudo: os blocos
+// são montados como template de HTML com estrutura própria, e reescrevê-los
+// nó a nó seria muito mais código para o mesmo resultado.
+function esc(value) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 function detectLang() {
   const supported = ['pt', 'en', 'es'];
@@ -490,6 +519,21 @@ async function loadUsage() {
   } catch (e) { /* silencioso: não é crítico pro fluxo */ }
 }
 
+// Tela vazia é convite à ação, não aviso de ausência: por isso tem botão.
+function showLibraryEmpty() {
+  const grid = document.getElementById('libraryGrid');
+  const box = document.getElementById('libraryEmpty');
+  grid.innerHTML = '';
+  box.style.display = 'block';
+  box.className = 'library-empty';
+  box.innerHTML = `
+    <div class="mark"><span></span></div>
+    <h3>${T.library_empty_title}</h3>
+    <p>${T.library_empty}</p>
+    <button class="btn btn-primary" id="libraryEmptyBtn">${T.library_empty_action}</button>`;
+  document.getElementById('libraryEmptyBtn').addEventListener('click', () => setView('home'));
+}
+
 async function loadLibrary() {
   const grid = document.getElementById('libraryGrid');
   document.getElementById('libraryTitle').textContent = T.library_title;
@@ -502,23 +546,24 @@ async function loadLibrary() {
       data.total ? `${data.total} ${T.library_count}` : T.library_subtitle;
 
     if (!data.clips.length) {
-      grid.innerHTML = `<p class="muted">${T.library_empty}</p>`;
+      showLibraryEmpty();
       return;
     }
+    document.getElementById('libraryEmpty').style.display = 'none';
     grid.innerHTML = data.clips.map(c => `
       <div class="library-item">
-        <video src="${c.video}" ${c.thumbnail ? `poster="${c.thumbnail}"` : ''} controls preload="none"></video>
+        <video src="${esc(c.video)}" ${c.thumbnail ? `poster="${esc(c.thumbnail)}"` : ''} controls preload="none"></video>
         <div class="library-meta">
           ${expiryBadge(c.expires_in_days)}
-          <div class="name">${c.filename}</div>
+          <div class="name">${esc(c.filename)}</div>
           <div class="library-actions">
-            <a class="btn btn-secondary" href="${c.video}" download>${T.library_download}</a>
-            <a class="btn btn-ghost" href="${c.video}" target="_blank">${T.library_open}</a>
+            <a class="btn btn-secondary" href="${esc(c.video)}" download>${T.library_download}</a>
+            <a class="btn btn-ghost" href="${esc(c.video)}" target="_blank">${T.library_open}</a>
           </div>
         </div>
       </div>`).join('');
   } catch (e) {
-    grid.innerHTML = `<p class="muted">${T.library_empty}</p>`;
+    showLibraryEmpty();
   }
 }
 document.getElementById('backToHomeBtn').addEventListener('click', () => setView('home'));
@@ -881,7 +926,7 @@ function selectClip(idx) {
   const reason = buildReason(clip);
   if (reason) {
     els.clipWhyBox.style.display = 'block';
-    els.clipWhyBox.innerHTML = `<strong>${T.why_label}</strong>${reason}`;
+    els.clipWhyBox.innerHTML = `<strong>${T.why_label}</strong>${esc(reason)}`;
   } else {
     els.clipWhyBox.style.display = 'none';
   }
@@ -912,8 +957,8 @@ function renderClipPanel(clip) {
       <input type="text" id="clipTitleInput" placeholder="${T.panel_title_placeholder}" value="${defaultTitle}">
     </div>
     <div class="panel-actions">
-      <a class="btn btn-secondary" id="downloadClipBtn" href="${clip.video}" download>${T.action_download_clip}</a>
-      ${clip.thumbnail ? `<a class="btn btn-secondary" href="${clip.thumbnail}" download>${T.action_download_thumb}</a>` : ''}
+      <a class="btn btn-secondary" id="downloadClipBtn" href="${esc(clip.video)}" download>${T.action_download_clip}</a>
+      ${clip.thumbnail ? `<a class="btn btn-secondary" href="${esc(clip.thumbnail)}" download>${T.action_download_thumb}</a>` : ''}
       <button class="btn btn-secondary" id="saveDraftBtn">${T.action_save_draft}</button>
       <button class="btn btn-primary" id="regenerateBtn">${T.action_regenerate}</button>
     </div>
@@ -1054,7 +1099,7 @@ function renderReviewCandidateList() {
     <div class="review-candidate-item ${idx === reviewSelectedIdx ? 'selected' : ''}" data-idx="${idx}">
       <div style="flex:1; min-width:0;">
         <span class="badge badge-score">${Math.round(c.score)}</span>
-        <div class="excerpt">${(c.transcript_excerpt || '').slice(0, 90)}</div>
+        <div class="excerpt">${esc((c.transcript_excerpt || '').slice(0, 90))}</div>
       </div>
     </div>
   `).join('');
@@ -1086,7 +1131,7 @@ function renderTranscriptPanel(candidate, state) {
   document.getElementById('transcriptHint').textContent = T.transcript_hint;
   reviewEls.transcriptPanel.innerHTML = (candidate.phrases || []).map((p, i) => {
     const selected = p.start >= state.start - 0.05 && p.end <= state.end + 0.05;
-    return `<div class="phrase-row ${selected ? 'selected' : ''}" data-idx="${i}"><span class="ts">${formatDuration(p.start)}</span><span>${p.text}</span></div>`;
+    return `<div class="phrase-row ${selected ? 'selected' : ''}" data-idx="${i}"><span class="ts">${formatDuration(p.start)}</span><span>${esc(p.text)}</span></div>`;
   }).join('');
 
   reviewEls.transcriptPanel.querySelectorAll('.phrase-row').forEach(row => {

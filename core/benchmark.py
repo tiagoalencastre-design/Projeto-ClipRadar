@@ -177,33 +177,62 @@ def evaluate(
 
     `detected` precisa vir ORDENADO por score (melhor primeiro) — é o que
     moments_from_analysis já faz.
+
+    CORRESPONDÊNCIA 1:1, e isso importa muito.
+
+    Antes, cada momento esperado procurava seu melhor candidato de forma
+    independente. Um único clipe longo que cobrisse três momentos marcados
+    contava como TRÊS acertos — 100% de recall com um clipe só. O benchmark
+    premiava exatamente o defeito que o motor V2 veio corrigir: juntar
+    acontecimentos independentes num clipe arrastado.
+
+    Agora cada candidato responde por no máximo um momento esperado. O
+    pareamento é guloso pela maior sobreposição: ordenamos todos os pares
+    possíveis do melhor para o pior e vamos fixando, pulando quem já foi
+    usado dos dois lados.
     """
     top = detected[:top_n]
     result = BenchmarkResult(
         video=video, game=game, top_n=top_n, total_expected=len(expected)
     )
 
-    matched_detected: set[int] = set()
-
-    for want in expected:
-        best_rank, best_ratio = None, 0.0
+    # Todos os pares viáveis (esperado, detectado, sobreposição).
+    pairs = []
+    for want_index, want in enumerate(expected):
         for rank, got in enumerate(top, start=1):
             ratio = overlap_ratio(want, got)
-            if ratio >= min_overlap and ratio > best_ratio:
-                best_rank, best_ratio = rank, ratio
+            if ratio >= min_overlap:
+                pairs.append((ratio, want_index, rank, got))
 
-        if best_rank is None:
+    # Maior sobreposição primeiro; empate resolvido pelo melhor rank, para
+    # que o resultado não dependa da ordem em que os momentos foram escritos
+    # no gabarito.
+    pairs.sort(key=lambda p: (-p[0], p[2]))
+
+    used_expected: set[int] = set()
+    used_detected: set[int] = set()
+
+    for ratio, want_index, rank, _got in pairs:
+        if want_index in used_expected or rank in used_detected:
+            continue
+        used_expected.add(want_index)
+        used_detected.add(rank)
+        result.hits.append({
+            "label": expected[want_index].label,
+            "rank": rank,
+            "overlap": round(ratio, 3),
+        })
+
+    for index, want in enumerate(expected):
+        if index not in used_expected:
             result.missed.append({
                 "start": want.start, "end": want.end, "label": want.label,
             })
-        else:
-            matched_detected.add(best_rank - 1)
-            result.hits.append({
-                "label": want.label, "rank": best_rank,
-                "overlap": round(best_ratio, 3),
-            })
 
-    result.false_positives = len(top) - len(matched_detected)
+    # Os acertos ficam em ordem de rank, não da força do pareamento — é como
+    # a pessoa lê o relatório.
+    result.hits.sort(key=lambda h: h["rank"])
+    result.false_positives = len(top) - len(used_detected)
     return result
 
 
@@ -222,6 +251,35 @@ def evaluate_files(
         video=truth["video"], game=truth["game"],
         top_n=top_n, min_overlap=min_overlap,
     )
+
+
+# Cortes usados nos relatórios. 5 é o que o criador realmente olha; 10 e 20
+# mostram se o sistema tem material bom mais fundo no ranking.
+DEFAULT_CUTOFFS = (5, 10, 20)
+
+
+def evaluate_at_cutoffs(
+    expected: list[Moment],
+    detected: list[Moment],
+    cutoffs: tuple[int, ...] = DEFAULT_CUTOFFS,
+    min_overlap: float = DEFAULT_OVERLAP,
+) -> dict:
+    """
+    Recall e precisão em vários cortes do ranking.
+
+    POR QUE VÁRIOS CORTES: recall@5 e recall@20 respondem perguntas
+    diferentes. O primeiro pergunta "os melhores momentos aparecem logo?";
+    o segundo, "o sistema pelo menos ENCONTRA os bons momentos?". Um recall@20
+    alto com recall@5 baixo significa que a detecção funciona e a ordenação
+    não — problema bem diferente de não achar nada.
+    """
+    out = {}
+    for n in cutoffs:
+        result = evaluate(expected, detected, top_n=n, min_overlap=min_overlap)
+        out[f"recall_at_{n}"] = result.recall_at_n
+        out[f"precision_at_{n}"] = result.precision_at_n
+        out[f"average_rank_at_{n}"] = result.average_rank
+    return out
 
 
 def summarize(results: list[BenchmarkResult]) -> dict:

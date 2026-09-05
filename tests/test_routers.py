@@ -44,6 +44,9 @@ class TestAllUrlsStillRegistered(unittest.TestCase):
         "/api/history",
         # --- Biblioteca de clips ---
         "/api/clips",
+        # --- entrega autenticada de mídia (substituiu os mounts públicos) ---
+        "/files/clips/{file_path}",
+        "/files/vods/{file_path}",
         "/api/plans",
         "/api/brand-kit",
         "/api/usage",

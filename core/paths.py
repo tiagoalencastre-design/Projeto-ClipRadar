@@ -28,7 +28,18 @@ SUPPORTED_VIDEO_EXTENSIONS = (".mp4", ".mov", ".mkv", ".webm")
 
 
 def safe_filename(name: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._-]", "_", Path(name).name)
+    """
+    Neutraliza um nome de arquivo vindo do navegador.
+
+    Troca apenas os caracteres proibidos pelo Windows (e as barras, que
+    permitiriam travessia de diretório). Acentos são PRESERVADOS de
+    propósito: o público é brasileiro, e transformar "atualização.mp4" em
+    "atualiza__o.mp4" piora a experiência sem ganho de segurança — a
+    proteção real contra travessia é a checagem de caminho resolvido feita
+    por quem chama.
+    """
+    name = re.sub(r'[<>:"/\\|?*]', "_", Path(name).name)
+    return name.strip() or "video"
 
 
 def user_vods_dir(storage_key: str) -> Path:

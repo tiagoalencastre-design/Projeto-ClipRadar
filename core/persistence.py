@@ -19,7 +19,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from core.observability import log_event
-from core.repositories import ClipRepository, JobRepository, VideoRepository
+from core.repositories import (
+    ClipRepository, JobRepository, VideoRepository, _safe,
+)
 
 
 def register_video(
@@ -194,3 +196,94 @@ def list_user_history(user_id: int, limit: int = 50) -> dict:
             for c in ClipRepository.list_for_user(user_id)
         ],
     }
+
+
+# ============================================================
+# Consumo de cota
+# ============================================================
+#
+# QUANDO O CONSUMO É REGISTRADO: no INÍCIO do processamento, não no fim.
+#
+# Registrar no fim parece mais justo, mas abre duas brechas:
+#
+#   1. CONCORRÊNCIA — dois envios simultâneos consultam a cota antes de
+#      qualquer um terminar. Ambos veem "0 minutos usados", ambos passam, e
+#      o usuário processa o dobro do plano.
+#
+#   2. INTERRUPÇÃO — se o servidor cai no meio, o processamento consumiu CPU
+#      e não é cobrado.
+#
+# Reservar na entrada fecha as duas. Em troca, um job que falha logo no
+# começo ficaria cobrado indevidamente — por isso existe `refund_usage()`,
+# chamada quando o job termina em erro.
+
+def reserve_usage(
+    user_id: int, job_id: str, minutes: float, video_id: int | None = None
+) -> bool:
+    """
+    Reserva minutos da cota do usuário para um job.
+
+    IDEMPOTENTE: o índice único em usage_events(job_id) faz a segunda
+    tentativa falhar silenciosamente. Retry, clique duplo e requisições
+    simultâneas com o mesmo job_id não cobram duas vezes.
+
+    Devolve True se a reserva foi criada agora, False se já existia ou se o
+    banco falhou — em nenhum dos casos o processamento é interrompido.
+    """
+    if minutes <= 0:
+        return False
+
+    def _write():
+        import sqlite3
+
+        from core import database
+
+        try:
+            with database.get_db() as conn:
+                conn.execute(
+                    """INSERT INTO usage_events
+                       (user_id, event_type, job_id, minutes_processed, created_at)
+                       VALUES (?, 'video_processed', ?, ?, ?)""",
+                    (user_id, job_id, round(minutes, 2), database._now()),
+                )
+                conn.commit()
+                return True
+        except sqlite3.IntegrityError:
+            # Já reservado para este job — comportamento esperado num retry.
+            return False
+
+    created = _safe("reservar cota", _write, False)
+    log_event(
+        stage="cota_reservada" if created else "cota_ja_reservada",
+        job_id=job_id, video_id=video_id, user_id=user_id,
+        minutes=round(minutes, 2),
+    )
+    return bool(created)
+
+
+def refund_usage(job_id: str) -> bool:
+    """
+    Devolve a cota de um job que terminou em erro.
+
+    Sem isto, uma falha de FFmpeg nos primeiros segundos consumiria a hora
+    inteira do usuário.
+
+    Nota honesta: um job interrompido por queda do servidor NÃO é estornado
+    — ele não passa por aqui. É proposital: o processamento consumiu CPU até
+    o momento da queda.
+    """
+    def _delete():
+        from core import database
+
+        with database.get_db() as conn:
+            cursor = conn.execute(
+                "DELETE FROM usage_events WHERE job_id = ? AND event_type = 'video_processed'",
+                (job_id,),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    refunded = _safe("estornar cota", _delete, False)
+    if refunded:
+        log_event(stage="cota_estornada", job_id=job_id)
+    return bool(refunded)

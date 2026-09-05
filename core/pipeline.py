@@ -27,6 +27,7 @@ from dotenv import load_dotenv
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.detection import collect_raw_signals
+from core import transcript_cache
 from core.transcription import transcribe
 from core.discovery import discover_and_select
 from core.v2_adapter import candidates_to_moments
@@ -116,14 +117,32 @@ def run_pipeline(video_path: str, config: dict, output_path: str, on_step: calla
 
         pbar.set_description(steps[1])
         _report("transcribing")
-        try:
-            transcript = transcribe(
-                video_path,
-                model_size=config["whisper"]["model_size"],
-                language=config["whisper"]["language"],
-            )
-        except Exception as e:
-            raise PipelineError(f"Falha ao transcrever o áudio de {video_path}.\nDetalhe técnico: {e}")
+
+        # CACHE DE TRANSCRIÇÃO.
+        #
+        # A transcrição é a etapa mais cara do pipeline (Whisper na CPU) e a
+        # mais determinística: o mesmo vídeo, com o mesmo modelo e idioma,
+        # sempre produz o mesmo texto. Reaproveitar economiza minutos a cada
+        # reanálise — e reanalisar acontece o tempo todo: ao comparar pesos
+        # do scoring, ao rodar o benchmark, ou quando o usuário gera
+        # "montagem" depois de "clipes separados" do mesmo VOD.
+        #
+        # O cache fica ao lado do analysis.json, na pasta do usuário.
+        model_size = config["whisper"]["model_size"]
+        language = config["whisper"]["language"]
+        cached_at = transcript_cache.cache_path(
+            Path(output_path).parent, video_path, model_size, language
+        )
+        transcript = transcript_cache.load(cached_at)
+
+        if transcript is None:
+            try:
+                transcript = transcribe(
+                    video_path, model_size=model_size, language=language,
+                )
+            except Exception as e:
+                raise PipelineError(f"Falha ao transcrever o áudio de {video_path}.\nDetalhe técnico: {e}")
+            transcript_cache.save(cached_at, transcript)
         pbar.update(1)
 
         pbar.set_description(steps[2])

@@ -179,10 +179,13 @@ class TestRetentionCleanup(unittest.TestCase):
 
 class TestQuotaEnforcement(unittest.TestCase):
     def test_quota_checked_before_processing(self):
-        """Descobrir que a cota acabou após 20 min de espera seria péssimo."""
+        """
+        Descobrir que a cota acabou após 20 min de espera seria péssimo:
+        a checagem precisa vir antes de a thread de processamento começar.
+        """
         generate = API[API.index("def generate("):]
-        generate = generate[:generate.index("_try_acquire_job_slot")]
-        self.assertIn("_enforce_quota(user, video_path)", generate)
+        generate = generate[:generate.index("queue.submit(")]
+        self.assertIn("_enforce_quota(user, video_path, job_id)", generate)
 
     def test_uses_payment_required_status(self):
         self.assertIn("HTTPException(402", API)

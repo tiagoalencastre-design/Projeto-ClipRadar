@@ -1,0 +1,21 @@
+{
+  "video": "COLOQUE_AQUI_o_nome_do_arquivo.mp4",
+  "game": "cs2",
+  "_instrucoes": [
+    "1. Troque 'video' pelo nome exato do arquivo em data/vods/<sua-chave>/",
+    "2. Assista o VOD e anote os momentos que VOCÊ postaria.",
+    "3. Tempos em SEGUNDOS desde o início. 12:30 = 750.",
+    "4. Não precisa ser exato: alguns segundos a mais ou a menos não atrapalham.",
+    "5. Marque de 8 a 12 momentos por VOD. Menos que isso não dá base;",
+    "   mais que isso vira trabalho sem retorno.",
+    "6. Marque o que você postaria de VERDADE, não o que 'tecnicamente aconteceu'.",
+    "7. Apague este campo _instrucoes quando terminar."
+  ],
+  "moments": [
+    {
+      "start": 0,
+      "end": 0,
+      "label": "descreva o momento"
+    }
+  ]
+}

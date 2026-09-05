@@ -86,7 +86,24 @@ class TestPriorityQueue(unittest.TestCase):
             blocker.set()
 
     def test_server_uses_priority_for_studio(self):
-        self.assertIn("_try_acquire_job_slot(priority=plan.priority_queue)", API)
+        """
+        O servidor passa a prioridade do plano para a FILA — não mantém mais
+        um contador próprio de vagas. Duas arquiteturas para a mesma coisa
+        era dívida técnica; agora core/queue.py é a única autoridade.
+        """
+        self.assertIn("has_capacity(priority=plan.priority_queue)", API)
+        self.assertIn("priority=plan.priority_queue,", API)
+
+    def test_server_does_not_manage_slots_itself(self):
+        """Se o contador próprio voltar, temos duas fontes de verdade de novo."""
+        for legacy in ("_try_acquire_job_slot", "_release_job_slot", "_active_job_count"):
+            self.assertNotIn(legacy, API, f"controle próprio de vagas voltou: {legacy}")
+
+    def test_jobs_go_through_the_queue(self):
+        """Nenhuma rota pode criar threading.Thread por conta própria."""
+        import re
+        threads = re.findall(r"^\s*thread = threading\.Thread\(", API, re.M)
+        self.assertEqual(threads, [], "ainda há thread criada fora da fila")
 
 
 class TestBrandKit(unittest.TestCase):

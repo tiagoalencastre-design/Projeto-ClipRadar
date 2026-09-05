@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 from core.benchmark import (
-    Moment, evaluate, evaluate_files, load_ground_truth,
+    DEFAULT_CUTOFFS, Moment, evaluate_at_cutoffs, evaluate, evaluate_files, load_ground_truth,
     moments_from_analysis, overlap_ratio, summarize,
 )
 
@@ -179,6 +179,112 @@ class TestSummary(unittest.TestCase):
     def test_result_as_dict_is_json_serializable(self):
         r = evaluate([Moment(10, 20, "x")], [Moment(50, 60)], top_n=5)
         json.dumps(r.as_dict())
+
+
+class TestOneToOneMatching(unittest.TestCase):
+    """
+    Um candidato só pode responder por UM momento esperado.
+
+    O BUG QUE ISTO CORRIGE: antes, cada momento procurava seu melhor
+    candidato de forma independente. Um clipe longo cobrindo três momentos
+    marcados contava como três acertos — 100% de recall com um clipe só.
+    O benchmark premiava justamente o defeito que a V2 veio corrigir.
+    """
+
+    EXPECTED = [
+        Moment(110, 125, "clutch"),
+        Moment(140, 155, "reação"),
+        Moment(175, 190, "risada"),
+    ]
+
+    def test_one_long_clip_does_not_cover_three_moments(self):
+        result = evaluate(self.EXPECTED, [Moment(100, 200, "único")], top_n=10)
+        self.assertEqual(len(result.hits), 1)
+        self.assertEqual(len(result.missed), 2)
+        self.assertLess(result.recall_at_n, 0.5)
+
+    def test_separate_clips_score_full_recall(self):
+        detected = [Moment(108, 127), Moment(138, 157), Moment(173, 192)]
+        result = evaluate(self.EXPECTED, detected, top_n=10)
+        self.assertEqual(result.recall_at_n, 1.0)
+        self.assertEqual(len(result.hits), 3)
+
+    def test_each_rank_is_used_at_most_once(self):
+        result = evaluate(self.EXPECTED, [Moment(100, 200)], top_n=10)
+        ranks = [h["rank"] for h in result.hits]
+        self.assertEqual(len(ranks), len(set(ranks)))
+
+    def test_best_overlap_wins_the_pairing(self):
+        """Quando as coberturas diferem, fica com a melhor — não com a primeira."""
+        expected = [Moment(100, 130, "alvo")]
+        detected = [
+            Moment(120, 200, "parcial"),   # cobre só o fim do momento
+            Moment(101, 129, "justo"),     # cobre quase tudo
+        ]
+        result = evaluate(expected, detected, top_n=10)
+        self.assertEqual(len(result.hits), 1)
+        self.assertEqual(result.hits[0]["rank"], 2, "pareou com o pior candidato")
+
+    def test_equal_overlap_is_decided_by_rank(self):
+        """
+        Empate de cobertura é resolvido pelo melhor rank — o candidato que o
+        sistema julgou melhor. Sem esse desempate, o resultado dependeria da
+        ordem em que os candidatos aparecem na lista.
+        """
+        expected = [Moment(100, 130, "alvo")]
+        detected = [Moment(100, 400, "largo"), Moment(100, 130, "exato")]
+        result = evaluate(expected, detected, top_n=10)
+        self.assertEqual(result.hits[0]["rank"], 1)
+
+    def test_result_does_not_depend_on_ground_truth_order(self):
+        """Reordenar o gabarito não pode mudar a nota."""
+        detected = [Moment(108, 127), Moment(138, 157), Moment(173, 192)]
+        direct = evaluate(self.EXPECTED, detected, top_n=10)
+        reversed_truth = evaluate(list(reversed(self.EXPECTED)), detected, top_n=10)
+        self.assertEqual(direct.recall_at_n, reversed_truth.recall_at_n)
+        self.assertEqual(
+            sorted(h["rank"] for h in direct.hits),
+            sorted(h["rank"] for h in reversed_truth.hits),
+        )
+
+    def test_false_positives_count_unmatched_clips(self):
+        result = evaluate(self.EXPECTED, [Moment(100, 200), Moment(900, 950)], top_n=10)
+        self.assertEqual(result.false_positives, 1)
+
+    def test_hits_are_reported_in_rank_order(self):
+        detected = [Moment(173, 192), Moment(108, 127), Moment(138, 157)]
+        result = evaluate(self.EXPECTED, detected, top_n=10)
+        ranks = [h["rank"] for h in result.hits]
+        self.assertEqual(ranks, sorted(ranks))
+
+
+class TestCutoffMetrics(unittest.TestCase):
+    def _scenario(self):
+        expected = [Moment(i * 200 + 50, i * 200 + 80, f"m{i}") for i in range(8)]
+        # Ordenação imperfeita: dois bons momentos caem fora do top 5.
+        detected = [Moment(i * 200 + 48, i * 200 + 82) for i in (0, 1, 7, 3, 2, 5, 4, 6)]
+        return expected, detected
+
+    def test_reports_every_cutoff(self):
+        metrics = evaluate_at_cutoffs(*self._scenario())
+        for n in DEFAULT_CUTOFFS:
+            self.assertIn(f"recall_at_{n}", metrics)
+            self.assertIn(f"precision_at_{n}", metrics)
+
+    def test_recall_grows_with_the_cutoff(self):
+        """Olhar mais fundo no ranking nunca pode achar menos."""
+        m = evaluate_at_cutoffs(*self._scenario())
+        self.assertLessEqual(m["recall_at_5"], m["recall_at_10"])
+        self.assertLessEqual(m["recall_at_10"], m["recall_at_20"])
+
+    def test_separates_detection_from_ordering(self):
+        """
+        recall@20 alto com recall@5 baixo significa que o sistema ACHA os
+        momentos e ORDENA mal — problema bem diferente de não achar nada.
+        """
+        m = evaluate_at_cutoffs(*self._scenario())
+        self.assertEqual(m["recall_at_20"], 1.0)
+        self.assertLess(m["recall_at_5"], 1.0)
 
 
 if __name__ == "__main__":

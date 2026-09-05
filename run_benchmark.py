@@ -25,7 +25,10 @@ import json
 import sys
 from pathlib import Path
 
-from core.benchmark import BENCHMARK_DIR, evaluate_files, summarize
+from core.benchmark import (
+    BENCHMARK_DIR, DEFAULT_CUTOFFS, evaluate_at_cutoffs, evaluate_files,
+    load_ground_truth, moments_from_analysis, summarize,
+)
 
 
 def main() -> int:
@@ -77,6 +80,31 @@ def main() -> int:
 
     if skipped:
         print(f"\nSem análise (rode o pipeline neles): {', '.join(skipped)}")
+
+    # Recall e precisão em vários cortes do ranking (@5, @10, @20).
+    if results and not args.json:
+        print("\n" + "=" * 42)
+        print("POR CORTE DO RANKING")
+        acumulado: dict[str, list[float]] = {}
+        for truth_file in truth_files:
+            analysis_file = BENCHMARK_DIR / "analysis" / truth_file.name
+            if not analysis_file.exists():
+                continue
+            truth = load_ground_truth(truth_file)
+            analysis = json.loads(analysis_file.read_text(encoding="utf-8"))
+            for chave, valor in evaluate_at_cutoffs(
+                truth["moments"], moments_from_analysis(analysis),
+                min_overlap=args.overlap,
+            ).items():
+                if valor is not None:
+                    acumulado.setdefault(chave, []).append(valor)
+
+        for n in DEFAULT_CUTOFFS:
+            recall = acumulado.get(f"recall_at_{n}", [])
+            precisao = acumulado.get(f"precision_at_{n}", [])
+            if recall:
+                print(f"  @{n:<3} recall {sum(recall)/len(recall):.0%}"
+                      f"   precisão {sum(precisao)/len(precisao):.0%}")
 
     if results:
         s = summarize(results)

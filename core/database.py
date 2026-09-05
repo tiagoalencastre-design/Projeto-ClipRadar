@@ -21,10 +21,45 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# Tempo que uma conexão espera quando o banco está ocupado, antes de
+# desistir com "database is locked". O projeto processa vídeos em threads
+# paralelas; sem esta espera, uma gravação simultânea falha na hora.
+BUSY_TIMEOUT_MS = 5000
+
+
+def _configure(conn: sqlite3.Connection) -> None:
+    """
+    Ajustes aplicados a TODA conexão.
+
+    journal_mode=WAL — leituras deixam de bloquear a escrita e vice-versa.
+        É o ajuste que mais importa aqui: sem ele, um job gravando progresso
+        trava a listagem de clipes de outro usuário. WAL é persistente (fica
+        gravado no arquivo), mas reaplicar é barato e garante o modo mesmo
+        num banco criado antes desta mudança.
+
+    foreign_keys=ON — o SQLite ignora FOREIGN KEY por padrão, mesmo
+        declarada. As 12 do esquema eram decorativas até aqui. Precisa ser
+        ligado POR CONEXÃO; não fica salvo no arquivo.
+
+    busy_timeout — espera em vez de falhar de imediato quando há concorrência.
+
+    synchronous=NORMAL — com WAL, é seguro e bem mais rápido que FULL. O
+        risco é perder a última transação numa queda de energia, não corromper
+        o banco.
+    """
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA synchronous = NORMAL")
+
+
 @contextmanager
 def get_db():
-    conn = sqlite3.connect(str(DB_PATH))
+    # timeout também no driver: cobre a espera pelo lock do próprio Python,
+    # antes mesmo de o SQLite ver a consulta.
+    conn = sqlite3.connect(str(DB_PATH), timeout=BUSY_TIMEOUT_MS / 1000)
     conn.row_factory = sqlite3.Row
+    _configure(conn)
     try:
         yield conn
     finally:
@@ -175,6 +210,50 @@ def init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id),
                 FOREIGN KEY(job_id) REFERENCES jobs(id)
             )
+        """)
+
+        # ------------------------------------------------------------
+        # Índices
+        # ------------------------------------------------------------
+        # Cada um cobre uma consulta que o código realmente faz. Índice sem
+        # consulta correspondente só custa espaço e lentidão na escrita.
+        #
+        # Os compostos seguem a ordem das colunas no WHERE: (user_id, X)
+        # serve tanto para filtrar por user_id sozinho quanto pelos dois.
+        for statement in (
+            # listar/consultar vídeos do usuário; buscar por caminho
+            "CREATE INDEX IF NOT EXISTS idx_videos_user ON videos(user_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_videos_path ON videos(user_id, storage_path)",
+            # histórico de jobs, e a varredura de jobs órfãos no boot
+            "CREATE INDEX IF NOT EXISTS idx_jobs_user ON jobs(user_id, started_at)",
+            "CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)",
+            # clipes por job (tela de resultados) e por usuário (biblioteca)
+            "CREATE INDEX IF NOT EXISTS idx_clips_job ON clips(job_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_clips_user ON clips(user_id, created_at)",
+            # soma de minutos do mês: a consulta mais quente do sistema de cota
+            "CREATE INDEX IF NOT EXISTS idx_usage_user ON usage_events(user_id, created_at)",
+            # feedback: resumo por usuário e substituição do voto por clipe
+            "CREATE INDEX IF NOT EXISTS idx_feedback_user ON clip_feedback(user_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_feedback_clip ON clip_feedback(user_id, clip_identifier)",
+            # projetos do usuário
+            "CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id, created_at)",
+            # validação de sessão: roda em toda requisição autenticada
+            "CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)",
+        ):
+            conn.execute(statement)
+
+        # Índice ÚNICO do consumo por job.
+        #
+        # É o que torna o registro de uso idempotente: um retry, um clique
+        # duplo ou duas requisições simultâneas com o mesmo job_id não
+        # conseguem cobrar duas vezes — o INSERT simplesmente falha.
+        #
+        # Parcial (WHERE job_id IS NOT NULL) porque eventos sem job — de
+        # outros tipos de uso — podem repetir livremente.
+        conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_job_unique
+            ON usage_events(job_id)
+            WHERE job_id IS NOT NULL AND event_type = 'video_processed'
         """)
 
         conn.commit()

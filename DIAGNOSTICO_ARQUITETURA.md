@@ -63,13 +63,58 @@ zero de propósito.
 SQLite com nove tabelas: `users`, `sessions`, `projects`, `videos`, `jobs`,
 `clips`, `usage_events`, `clip_feedback`, `plan_migration_marker`.
 
-- `core/database.py` — esquema e conexão
+- `core/database.py` — esquema, conexão e configuração de produção:
+  `journal_mode=WAL` (leitura não bloqueia escrita), `foreign_keys=ON` (o
+  SQLite as ignora por padrão), `busy_timeout=5000` e `synchronous=NORMAL`.
+  Doze índices, cada um cobrindo uma consulta que o código realmente faz.
 - `core/repositories.py` — acesso por entidade, tolerante a falha
 - `core/persistence.py` — liga o fluxo real ao banco
 - `core/job_store.py` — dicionário que espelha jobs no banco automaticamente
 
 Jobs sobrevivem a restart; os que estavam rodando quando o processo caiu
 ficam marcados como `interrupted`.
+
+## Segurança — IMPLEMENTADO
+
+- **Escape de HTML no front** (`esc()` em `app.js`): transcrição, nome de
+  arquivo e URLs passam por escape antes de entrar em `innerHTML`.
+- **Lista de URLs permitidas** (`core/url_policy.py`): só domínios do
+  YouTube. Bloqueia `file://`, rede interna e domínios parecidos.
+- **Limite de tentativas por IP** (`core/rate_limit.py`): login, cadastro e
+  reenvio de confirmação. Estado em memória — some no restart, o que é
+  suficiente para um processo só.
+- **Token de confirmação expira em 24h.**
+- **Cookie de sessão** com `HttpOnly`, `SameSite=Lax` e `Secure` quando a
+  URL base é https.
+
+## Fila de jobs — IMPLEMENTADO
+
+`core/queue.py` define `JobQueue` (interface) e `ThreadQueue` (implementação
+atual: uma thread por job, com limite de simultâneos). `get_queue()` devolve
+a instância compartilhada.
+
+Todo trabalho de fundo — geração, análise e download do YouTube — passa por
+`queue.submit()`. O servidor não cria threads nem conta vagas por conta
+própria; até a integração da V2 havia dois mecanismos concorrentes, o que
+era dívida técnica.
+
+O plano Studio recebe uma vaga ALÉM do limite normal (`priority=True`), para
+que um assinante não fique preso atrás de usuários do plano grátis. Trocar
+por Redis ou Celery é implementar `JobQueue` — nenhuma rota muda.
+
+## Entrega de arquivos — IMPLEMENTADO
+
+`core/files.py`. Clipes e vídeos são servidos por rotas autenticadas
+(`/files/clips/{path}`, `/files/vods/{path}`), não por `StaticFiles`. Cada
+download exige sessão válida e confirma que o arquivo está dentro da pasta
+do próprio usuário; caminho com `..` é recusado.
+
+Suporte a Range implementado à mão — o `FileResponse` do Starlette usado
+aqui não trata o cabeçalho, e sem ele o navegador não consegue arrastar a
+barra do vídeo.
+
+Apenas `/assets` continua público: CSS, JS e logo precisam carregar antes
+do login.
 
 ## API — IMPLEMENTADO
 
@@ -88,6 +133,13 @@ retenção de clipes, marca d'água, fila prioritária e Brand Kit. Preços por
 região (BRL, USD, GBP, EUR).
 
 **Não há integração de pagamento.** Nenhum gateway, nenhuma cobrança.
+
+O consumo é **reservado no início** do processamento (`persistence.reserve_usage`),
+não no fim. Reservar na entrada fecha duas brechas: requisições simultâneas
+que leriam a mesma cota livre, e processamento interrompido que não seria
+cobrado. Um índice único em `usage_events(job_id)` torna a reserva
+idempotente — retry e clique duplo não cobram duas vezes. Job que termina em
+erro é estornado (`refund_usage`).
 
 ## Camada de IA — IMPLEMENTADA, DESLIGADA
 
