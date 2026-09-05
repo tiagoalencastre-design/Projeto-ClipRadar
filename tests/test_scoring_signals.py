@@ -139,7 +139,7 @@ class TestScoresDidNotChange(unittest.TestCase):
     """
 
     def _breakdown(self):
-        from core.scoring import ContentScoreBreakdown
+        from core.legacy.scoring import ContentScoreBreakdown
         return ContentScoreBreakdown(
             gameplay_intensity=80.0, emotional_reaction=90.0,
             narrative_context=60.0, retention_potential=70.0, originality=60.0,

@@ -246,8 +246,14 @@ def build_candidate_moments(
     Se for usar, saiba que o modelo principal do projeto hoje é
     ClipCandidate (core/candidates.py), não CandidateMoment.
     """
-    cand_cfg = config["candidate_moments"]
-    weights = config["content_score_weights"]
+    # A configuração deste motor vive na seção "legacy" do settings.yaml —
+    # separada de propósito, pra deixar claro que ela não afeta o pipeline
+    # atual. Cai no que estiver no topo se a seção não existir, mantendo
+    # compatibilidade com arquivos de configuração antigos.
+    legacy_cfg = config.get("legacy", {}) or {}
+    cand_cfg = {**config.get("candidate_moments", {}), **legacy_cfg}
+    weights = legacy_cfg.get("content_score_weights") or config.get(
+        "content_score_weights", {})
 
     events = build_events(
         signals, transcript,

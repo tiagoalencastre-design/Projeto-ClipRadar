@@ -12,6 +12,8 @@ TikTok / Reels / Shorts. Público-alvo: criadores gamers brasileiros.
    nunca commitado. Uma chave já vazou assim antes.
 3. **Rodar os testes antes de entregar:** `python -m unittest discover -s tests`
    (459 testes, ~14s). Nunca alterar um teste para fazê-lo passar.
+   Durante o trabalho, o hook roda apenas os testes do módulo tocado; a
+   suíte completa roda ao fim da tarefa.
 
 ## Pipeline real
 
@@ -22,7 +24,8 @@ VOD → sinais (áudio/cena) → transcrição (Whisper)
 ```
 
 Ponto de entrada único: `core/discovery.py :: discover_and_select()`.
-Chamado por `core/pipeline.py`. **`core/scoring.py` é legado** — não usar.
+Chamado por `core/pipeline.py`. **`core/legacy/` é código morto** — não
+importar de lá. A seção `legacy:` do settings.yaml alimenta só ele.
 
 ## Quem manda em quê
 

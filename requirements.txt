@@ -14,7 +14,5 @@ uvicorn==0.30.6
 python-multipart==0.0.12
 yt-dlp==2024.10.7
 
-# Interface local de revisão (Fase 1)
-
 # Utilidades
 tqdm==4.66.5

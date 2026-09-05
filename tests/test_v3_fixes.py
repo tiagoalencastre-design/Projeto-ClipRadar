@@ -218,8 +218,15 @@ class TestShortFormFit(unittest.TestCase):
 # ============================================================
 
 class TestNoDeadConfiguration(unittest.TestCase):
-    def test_every_yaml_key_is_read_by_the_code(self):
-        """Config que não é lida é mentira: o usuário ajusta e nada muda."""
+    def test_every_production_key_is_read_by_the_code(self):
+        """
+        Config que não é lida é mentira: o usuário ajusta e nada muda.
+
+        A seção "legacy" é excluída DE PROPÓSITO — e só ela. Aquelas chaves
+        alimentam core/legacy/scoring.py, que não participa do pipeline, e o
+        próprio YAML avisa disso em comentário. Todo o resto continua tendo
+        que ser lido por algum módulo de produção.
+        """
         import os
 
         source = "".join(
@@ -233,11 +240,32 @@ class TestNoDeadConfiguration(unittest.TestCase):
                 if isinstance(value, dict):
                     yield from keys(value)
 
+        production = {k: v for k, v in CONFIG.items() if k != "legacy"}
         dead = [
-            key for key in set(keys(CONFIG))
+            key for key in set(keys(production))
             if f'"{key}"' not in source and f"'{key}'" not in source
         ]
         self.assertEqual(dead, [], f"configuração sem efeito: {sorted(dead)}")
+
+    def test_legacy_section_is_only_read_by_legacy_code(self):
+        """
+        A exclusão acima só é honesta se a seção legacy realmente não for
+        lida pela produção. Se alguém passar a usá-la, este teste avisa.
+        """
+        import os
+
+        production_source = "".join(
+            Path(f"core/{f}").read_text(encoding="utf-8")
+            for f in os.listdir("core") if f.endswith(".py")
+        )
+        self.assertNotIn('"legacy"', production_source)
+        self.assertNotIn("'legacy'", production_source)
+
+    def test_legacy_section_is_documented_as_inert(self):
+        """Quem abrir o YAML precisa ver que aquilo não afeta nada."""
+        yaml_text = Path("config/settings.yaml").read_text(encoding="utf-8")
+        section = yaml_text[yaml_text.index("# LEGADO"):]
+        self.assertIn("NADA desta seção afeta", section[:400])
 
 
 # ============================================================

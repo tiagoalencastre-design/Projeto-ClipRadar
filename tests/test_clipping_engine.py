@@ -278,7 +278,7 @@ class TestDiversity(unittest.TestCase):
 
 class TestStoryCompleteness(unittest.TestCase):
     def test_complete_story_scores_higher_than_bare_peak(self):
-        from core.scoring import _story_completeness
+        from core.legacy.scoring import _story_completeness
 
         transcript = [seg(94, 99, "faz cinco minutos tentando"),
                       seg(100, 104, "agora vai"),
@@ -296,18 +296,22 @@ class TestStoryCompleteness(unittest.TestCase):
         """O briefing pede peso significativo — não simbólico."""
         import yaml
         from pathlib import Path
+        # Os pesos deste motor moraram no topo do YAML até serem movidos
+        # para a seção "legacy". A asserção é a mesma; só o caminho mudou.
         weights = yaml.safe_load(
             Path("config/settings.yaml").read_text(encoding="utf-8")
-        )["content_score_weights"]
+        )["legacy"]["content_score_weights"]
         self.assertGreaterEqual(weights["story_completeness"], 1.0)
 
     def test_phase5_signals_are_active_now(self):
         """hook/surprise/ending eram calculados e ignorados (peso 0)."""
         import yaml
         from pathlib import Path
+        # Os pesos deste motor moraram no topo do YAML até serem movidos
+        # para a seção "legacy". A asserção é a mesma; só o caminho mudou.
         weights = yaml.safe_load(
             Path("config/settings.yaml").read_text(encoding="utf-8")
-        )["content_score_weights"]
+        )["legacy"]["content_score_weights"]
         for name in ("hook", "surprise", "ending_quality"):
             self.assertGreater(weights[name], 0.0, f"{name} continua ignorado")
 

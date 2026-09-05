@@ -70,7 +70,7 @@ por região. **Sem integração de pagamento.**
 
 ## Código legado
 
-- `core/scoring.py` — motor antigo, 1 candidato por história. Não é usado
+- `core/legacy/scoring.py` — motor antigo, 1 candidato por história. Não é usado
   pelo pipeline. Mantido só como referência de comparação.
 - `core/v2_adapter.py` — converte `ClipCandidate` para o formato antigo do
   `analysis.json`, para não quebrar o front-end.

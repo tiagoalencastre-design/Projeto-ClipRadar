@@ -6,8 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if echo \"$CLAUDE_TOOL_INPUT\" | grep -qE '(core/|tests/).*\\.py'; then python -m unittest discover -s tests 2>&1 | tail -5; fi",
-            "timeout": 120
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/after_edit.py\"",
+            "timeout": 60
           }
         ]
       }
@@ -18,8 +18,19 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if echo \"$CLAUDE_TOOL_INPUT\" | grep -qE 'git (commit|push)'; then if git diff --cached -U0 | grep -qE '^\\+.*(sk-[A-Za-z0-9_-]{20,}|OPENAI_API_KEY *= *[^ ]|RESEND_API_KEY *= *[^ ])'; then echo 'BLOQUEADO: possivel chave de API no commit'; exit 2; fi; fi",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/block_secrets.py\"",
             "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/full_suite.py\"",
+            "timeout": 180
           }
         ]
       }

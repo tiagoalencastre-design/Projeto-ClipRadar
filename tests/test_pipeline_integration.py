@@ -78,7 +78,18 @@ class TestPipelineUsesV2(unittest.TestCase):
         self.assertEqual(calls, [], "o pipeline voltou a usar o motor antigo")
 
     def test_pipeline_does_not_import_the_old_engine(self):
-        self.assertNotIn("from core.scoring import build_candidate_moments", self.SOURCE)
+        """
+        O motor antigo mudou de lugar (core/scoring.py -> core/legacy/).
+        Verificamos OS DOIS caminhos: se checássemos só o novo, um import do
+        caminho antigo passaria batido; se checássemos só o antigo, o teste
+        viraria decoração depois da mudança.
+        """
+        for forbidden in (
+            "from core.scoring import build_candidate_moments",
+            "from core.legacy.scoring import build_candidate_moments",
+            "from core.legacy import scoring",
+        ):
+            self.assertNotIn(forbidden, self.SOURCE, f"pipeline importou: {forbidden}")
 
 
 # ============================================================

@@ -22,6 +22,15 @@ data/cache/*
 !data/clips/.gitkeep
 !data/cache/.gitkeep
 
+# Logos enviadas pelos usuários (Brand Kit) — conteúdo de usuário, não código
+data/brand_kits/*
+!data/brand_kits/.gitkeep
+
+# Análises geradas pelo benchmark. Os GABARITOS (data/benchmark/*.json) são
+# versionados de propósito: são a referência de qualidade do projeto.
+data/benchmark/analysis/*
+!data/benchmark/analysis/.gitkeep
+
 # Configuração do editor (opcional manter, mas pode variar por máquina)
 .vscode/
 
