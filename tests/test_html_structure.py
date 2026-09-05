@@ -59,18 +59,39 @@ class TestNoOrphanReferences(unittest.TestCase):
     """Elemento removido do HTML mas ainda referenciado no JS quebra tudo."""
 
     def test_every_getelementbyid_target_exists(self):
+        """
+        O JS vive em web/assets/app.js desde a separação. Este teste LÊ OS
+        DOIS arquivos de propósito: se lesse só o index.html, não acharia
+        nenhum getElementById e passaria sem testar nada — falha silenciosa,
+        o pior tipo.
+        """
         html = Path("web/index.html").read_text(encoding="utf-8")
-        markup = _markup_only(html)
-        ids_in_html = set(re.findall(r'id="([A-Za-z0-9_-]+)"', markup))
-        # Elementos criados em tempo de execução pelo próprio script (via
-        # innerHTML ou createElement) também contam como existentes.
-        ids_in_html |= set(re.findall(r'id="([A-Za-z0-9_-]+)"', html))
-        ids_in_html |= set(re.findall(r"\.id = '([A-Za-z0-9_-]+)'", html))
-        dynamic: set[str] = set()
+        js = Path("web/assets/app.js").read_text(encoding="utf-8")
 
-        referenced = set(re.findall(r"getElementById\('([A-Za-z0-9_-]+)'\)", html))
-        missing = referenced - ids_in_html - dynamic
+        ids_in_html = set(re.findall(r'id="([A-Za-z0-9_-]+)"', html))
+        # Elementos criados em tempo de execução pelo próprio script.
+        ids_in_html |= set(re.findall(r'id="([A-Za-z0-9_-]+)"', js))
+        ids_in_html |= set(re.findall(r"\.id = '([A-Za-z0-9_-]+)'", js))
+
+        referenced = set(re.findall(r"getElementById\('([A-Za-z0-9_-]+)'\)", js))
+        self.assertGreater(len(referenced), 20, "não encontrei o JS — teste vazio?")
+
+        missing = referenced - ids_in_html
         self.assertEqual(missing, set(), f"JS busca ids que não existem: {sorted(missing)}")
+
+    def test_html_references_the_external_assets(self):
+        """Se o link quebrar, a página carrega sem estilo e sem JS."""
+        html = Path("web/index.html").read_text(encoding="utf-8")
+        self.assertIn('href="/assets/app.css"', html)
+        self.assertIn('src="/assets/app.js"', html)
+        self.assertTrue(Path("web/assets/app.css").exists())
+        self.assertTrue(Path("web/assets/app.js").exists())
+
+    def test_no_inline_style_or_script_left_behind(self):
+        """Bloco esquecido dentro do HTML sobrescreveria o arquivo externo."""
+        html = Path("web/index.html").read_text(encoding="utf-8")
+        self.assertNotIn("<style>", html)
+        self.assertIn('<script src="/assets/app.js">', html)
 
 
 if __name__ == "__main__":

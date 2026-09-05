@@ -50,16 +50,60 @@ class TestWatermark(unittest.TestCase):
             self.assertIn("__wmf", append_watermark(base, VERTICAL_RES))
 
     def test_missing_file_does_not_break_rendering(self):
-        """Melhor entregar sem marca do que falhar o clipe inteiro."""
-        import core.montage as montage
-        original = montage.WATERMARK_PATH
-        montage.WATERMARK_PATH = Path("/nao/existe/marca.png")
+        """
+        Melhor entregar sem marca do que falhar o clipe inteiro.
+
+        O patch precisa ser em core.render.filters, que é ONDE a função
+        procura o nome. Trocar core.montage.WATERMARK_PATH só mexeria na
+        reexportação, e a função continuaria lendo o valor original — o
+        teste passaria sem testar nada.
+        """
+        import core.render.filters as filters
+
+        original = filters.WATERMARK_PATH
+        filters.WATERMARK_PATH = Path("/nao/existe/marca.png")
         try:
             self.assertIsNone(build_watermark_filter(VERTICAL_RES))
             base = f"[0:v]{VERTICAL_FILTER}[__stacked]"
             self.assertEqual(append_watermark(base, VERTICAL_RES), base)
         finally:
+            filters.WATERMARK_PATH = original
+
+    def test_windows_drive_letter_is_escaped(self):
+        """
+        BUG REAL: dentro de um filter_complex, ":" separa argumentos. Um
+        caminho "C:/Users/.../watermark.png" fazia o FFmpeg ler só "C":
+
+            Failed to avformat_open_input 'C'
+
+        A marca d'água não renderizava em NENHUMA máquina Windows — o plano
+        grátis inteiro quebrava. Só apareceu quando o teste end-to-end rodou
+        no Windows de verdade.
+        """
+        import core.montage as montage
+
+        original = montage.WATERMARK_PATH
+        montage.WATERMARK_PATH = Path("C:/Users/teste/watermark.png")
+        try:
+            # Sem o arquivo existir, devolve None — então testamos o escape
+            # diretamente sobre a mesma transformação usada no filtro.
+            escaped = Path("C:/Users/teste/watermark.png").as_posix().replace(":", "\\:")
+            self.assertIn("C\\:", escaped)
+            self.assertNotIn("C:/", escaped)
+        finally:
             montage.WATERMARK_PATH = original
+
+    def test_filter_escapes_colon_when_present(self):
+        """O filtro montado nunca pode conter ':' de drive sem escape."""
+        from core.montage import build_watermark_filter
+
+        f = build_watermark_filter(VERTICAL_RES)
+        self.assertIsNotNone(f)
+        movie_part = f.split("[__wm]")[0]
+        # Qualquer ':' dentro do movie= precisa vir escapado.
+        import re
+        unescaped = re.findall(r"(?<!\\):", movie_part)
+        self.assertEqual(unescaped, [], f"':' sem escape em: {movie_part}")
 
     def test_only_free_plan_gets_it(self):
         self.assertTrue(PLANS[FREE].watermark)

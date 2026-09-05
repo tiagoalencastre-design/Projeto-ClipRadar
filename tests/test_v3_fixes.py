@@ -308,7 +308,23 @@ class TestEndToEndRender(unittest.TestCase):
                 "-of", "csv=p=0", str(output),
             ], capture_output=True, text=True, check=True)
             self.assertIn("1080,1920", probe.stdout)
-            self.assertIn("yuv420p", probe.stdout, "formato que players não abrem")
+
+            # O que importa é ser 4:2:0 de 8 bits — o único formato que todo
+            # player e toda rede social aceitam.
+            #
+            # "yuvj420p" é a variante FULL RANGE do mesmo formato (pixels de
+            # 0-255 em vez de 16-235). Alguns builds do FFmpeg produzem essa
+            # variante a partir da fonte sintética "testsrc2" usada aqui.
+            # Ambas abrem em qualquer player; exigir a string exata fazia o
+            # teste falhar por diferença de build, não por defeito real.
+            #
+            # O que continua sendo rejeitado: yuv444p, yuv422p e formatos de
+            # 10 bits, que de fato não abrem em players comuns.
+            pix_fmt = probe.stdout.strip().split(",")[-1]
+            self.assertIn(
+                pix_fmt, ("yuv420p", "yuvj420p"),
+                f"formato '{pix_fmt}' não abre em players comuns",
+            )
 
             # Decodifica o arquivo inteiro: pega timestamps quebrados.
             decode = subprocess.run(

@@ -38,7 +38,9 @@ importar de lá. A seção `legacy:` do settings.yaml alimenta só ele.
 | `editorial.py` | scoring heurístico (`EditorialAnalyzer` é o ponto de IA futura) |
 | `dedup.py` | deduplicação por conteúdo + diversidade |
 | `discovery.py` | **única autoridade de seleção** |
-| `montage.py` | renderiza. Não decide nada |
+| `montage.py` | orquestra o corte e a renderização. Não decide nada |
+| `render/filters.py` | filtros de vídeo (funções puras) |
+| `render/ffmpeg.py` | executa FFmpeg, sonda duração/fps, `VIDEO_OUTPUT_ARGS` |
 | `api_server.py` | rotas FastAPI (26) |
 | `plans.py` | grátis / pro / studio, limites e preços |
 
@@ -46,12 +48,16 @@ importar de lá. A seção `legacy:` do settings.yaml alimenta só ele.
 
 - **Vírgula em filtro FFmpeg** precisa de `\,` — bug real já corrigido.
 - **Sempre `-pix_fmt yuv420p`** e fps fixo. Sem isso o vídeo não abre no
-  Windows. Use `VIDEO_OUTPUT_ARGS` do `montage.py`, nunca parâmetros soltos.
+  Windows. Use `VIDEO_OUTPUT_ARGS` de `render/ffmpeg.py`, nunca parâmetros
+  soltos.
+- **Caminho de arquivo dentro de filtro precisa escapar `:`** (`C\:/...`),
+  senão o FFmpeg lê só a letra do drive no Windows.
 - **Nunca `concat -c copy`** com pedaços heterogêneos: gera timestamps
   quebrados.
-- **`web/index.html` tem 1.827 linhas** com HTML+CSS+JS+3 idiomas. Editar
-  por trecho, nunca reescrever inteiro. Confira o balanço de `<div>` depois
-  (`tests/test_html_structure.py` cobre isso).
+- **Front-end separado em 3 arquivos:** `web/index.html` (245 linhas, só
+  marcação), `web/assets/app.css` e `web/assets/app.js` (traduções,
+  navegação, upload, biblioteca, feedback). Editar só o arquivo relevante.
+  Confira o balanço de `<div>` depois (`tests/test_html_structure.py`).
 - **Textos de interface em 3 idiomas** (pt/en/es). Chave nova exige as três.
 - **Duração de clipe é consequência do conteúdo**, não meta.
 

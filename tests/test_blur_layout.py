@@ -9,6 +9,21 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+def _frontend_sources() -> str:
+    """
+    HTML + CSS + JS do painel, concatenados.
+
+    O web/index.html tinha 1.828 linhas com os três juntos. Depois da
+    separação, o CSS vive em web/assets/app.css e o JS em app.js — mas as
+    asserções destes testes continuam valendo sobre o conjunto, que é o que
+    o navegador de fato carrega.
+    """
+    return "\n".join(
+        Path(p).read_text(encoding="utf-8")
+        for p in ("web/index.html", "web/assets/app.css", "web/assets/app.js")
+    )
+
+
 from core.montage import (
     LAYOUT_OPTIONS, VERTICAL_RES, _build_blur_background_filter,
 )
@@ -69,7 +84,7 @@ class TestLayoutIntegration(unittest.TestCase):
         self.assertIn('"blur_background"', source)
 
     def test_frontend_offers_the_option_in_every_language(self):
-        html = Path("web/index.html").read_text(encoding="utf-8")
+        html = _frontend_sources()
         self.assertEqual(html.count("layout_blur_background:"), 4)
         self.assertIn('data-value="blur_background"', html)
 

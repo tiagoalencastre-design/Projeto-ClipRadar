@@ -10,9 +10,24 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+def _frontend_sources() -> str:
+    """
+    HTML + CSS + JS do painel, concatenados.
+
+    O web/index.html tinha 1.828 linhas com os três juntos. Depois da
+    separação, o CSS vive em web/assets/app.css e o JS em app.js — mas as
+    asserções destes testes continuam valendo sobre o conjunto, que é o que
+    o navegador de fato carrega.
+    """
+    return "\n".join(
+        Path(p).read_text(encoding="utf-8")
+        for p in ("web/index.html", "web/assets/app.css", "web/assets/app.js")
+    )
+
+
 from core.montage import DEFAULT_PRESET, EDIT_PRESETS
 
-HTML = Path("web/index.html").read_text(encoding="utf-8")
+HTML = _frontend_sources()
 API = Path("core/api_server.py").read_text(encoding="utf-8")
 
 
